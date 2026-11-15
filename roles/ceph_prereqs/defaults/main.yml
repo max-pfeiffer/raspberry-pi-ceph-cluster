@@ -7,5 +7,9 @@ ceph_prereq_packages:
   - python3
 
 # DANGER: when true, OSD disks (matched by ceph_osd_device_model) are wiped.
-# Only allowed before the cluster is bootstrapped.
+# Refused on nodes that run Ceph daemons or have a ceph.conf.
 wipe_osd_disks: false
+# DANGER: also wipe a disk that holds Ceph OSD data (LVM volume group "ceph-*").
+# Such a disk may be a live OSD of an existing cluster whose node was
+# re-flashed; `ceph cephadm osd activate <host>` brings it back without data loss.
+wipe_osd_disks_force: false

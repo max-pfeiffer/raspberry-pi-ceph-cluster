@@ -1,8 +1,12 @@
 ---
-# Node that runs the health checks. Defaults to another node than the one being
-# changed, so checks keep working while that node reboots.
-ceph_maintenance_peer: "{{ groups['ceph'] | difference([inventory_hostname]) | first }}"
+# Nodes that may run the health checks, in order of preference. The first
+# reachable one with a ceph.conf is used. The node being changed comes last, so
+# checks keep working while it is down.
+ceph_maintenance_peers: "{{ groups['ceph'] | difference([inventory_hostname]) + [inventory_hostname] }}"
 # Health checks that don't count as unhealthy (see also inventory group_vars).
 ceph_maintenance_allowed_checks: "{{ ceph_health_allowed_checks }}"
+# Also require all placement groups to be active+clean. Health checks alone can
+# lag for a few seconds right after an OSD rejoins.
+ceph_maintenance_require_clean_pgs: true
 ceph_maintenance_retries: 90
 ceph_maintenance_delay: 20

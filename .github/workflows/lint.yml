@@ -17,6 +17,16 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: true
-      # Same entry point as locally: installs the locked environment, then lints.
+      # Only needed once an encrypted vault.yml is committed: add its password
+      # as repository secret ANSIBLE_VAULT_PASSWORD.
+      - name: Provide the vault password
+        if: env.ANSIBLE_VAULT_PASSWORD != ''
+        run: printf '%s' "$ANSIBLE_VAULT_PASSWORD" > .vault-pass && chmod 600 .vault-pass
+        env:
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+      # Same entry points as locally: installs the locked environment, then lints
+      # and renders the templates.
       - name: Lint
         run: make deps lint
+      - name: Test
+        run: make test

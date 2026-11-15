@@ -13,7 +13,6 @@
         name: ceph_maintenance
         tasks_from: wait_healthy
       vars:
-        ceph_maintenance_peer: "{{ inventory_hostname }}"
         # Tolerate a noout flag left behind by an interrupted earlier run.
         ceph_maintenance_allowed_checks: "{{ ceph_health_allowed_checks + ['OSDMAP_FLAGS'] }}"
         ceph_maintenance_retries: 1
@@ -32,6 +31,19 @@
           loop_control:
             loop_var: ceph_maintenance_node
       always:
+        # Tried from every node: the admin node itself is rebooted too and may
+        # be the one that didn't come back.
         - name: Unset noout
-          ansible.builtin.command: "{{ ceph_shell }} ceph osd unset noout"
-          changed_when: true
+          ansible.builtin.command: "{{ ceph_shell }} ceph --connect-timeout 30 osd unset noout"
+          delegate_to: "{{ item }}"
+          loop: "{{ groups['ceph'] }}"
+          register: _unset_noout
+          ignore_unreachable: true
+          failed_when: false
+          changed_when: _unset_noout.rc | default(1) == 0
+
+        - name: Ensure noout was unset
+          ansible.builtin.assert:
+            that: _unset_noout.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | list | length > 0
+            fail_msg: "noout is still set. Run `ceph osd unset noout` once a node is reachable."
+            quiet: true

@@ -20,6 +20,12 @@ firewall_enabled: true
 # Networks allowed to reach Ceph and monitoring services.
 firewall_allowed_networks:
   - "{{ public_network }}"
+# Sources allowed to reach SSH. The default is open, because narrowing it can
+# lock you out: make sure the list covers your workstation AND the cluster nodes
+# (cephadm connects between them), e.g. ["{{ public_network }}", 192.168.1.0/24].
+# Once `any` is no longer in the list, the open rule is deleted.
+firewall_ssh_allowed_networks:
+  - any
 firewall_ceph_ports:
   - "3300"        # mon msgr2
   - "6789"        # mon msgr1
@@ -32,3 +38,6 @@ firewall_ceph_ports:
   - "9095"        # prometheus
   - "3000"        # grafana
   - "9093:9094"   # alertmanager
+# Ports to close again. A port that is just deleted from firewall_ceph_ports
+# stays open, so move it here.
+firewall_ceph_ports_absent: []

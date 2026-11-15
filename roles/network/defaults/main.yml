@@ -5,3 +5,6 @@ network_netplan_file: /etc/netplan/10-ceph.yaml
 # is disabled for these to prevent link flaps.
 network_usb_nic_ids:
   - { vendor: "0bda", product: "8156" }
+
+# Exists while a netplan change waits to be applied (on tmpfs, so a reboot clears it).
+network_apply_marker: /run/netplan-apply-required

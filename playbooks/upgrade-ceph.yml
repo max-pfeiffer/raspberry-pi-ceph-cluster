@@ -17,38 +17,46 @@
       ansible.builtin.command: "{{ ceph_shell }} ceph versions --format json"
       register: _versions
       changed_when: false
+      check_mode: false
 
     - name: Determine whether an upgrade is needed
       ansible.builtin.set_fact:
         _needs_upgrade: >-
           {{ (_versions.stdout | from_json).overall.keys()
-             | reject('search', 'ceph version ' ~ ceph_version ~ ' ') | list | length > 0 }}
+             | reject('search', 'ceph version ' ~ (ceph_version | regex_escape) ~ ' ') | list | length > 0 }}
 
     - name: Upgrade
       when: _needs_upgrade | bool
       block:
         - name: Check cluster health before upgrading
-          ansible.builtin.command: "{{ ceph_shell }} ceph health"
-          register: _health
-          changed_when: false
-          failed_when: "'HEALTH_OK' not in _health.stdout"
+          ansible.builtin.include_role:
+            name: ceph_maintenance
+            tasks_from: wait_healthy
+          vars:
+            ceph_maintenance_retries: 1
 
         - name: Start upgrade to {{ ceph_image }}
           ansible.builtin.command: "{{ ceph_shell }} ceph orch upgrade start --image {{ ceph_image }}"
           changed_when: true
 
+        # A failed upgrade pauses but stays "in progress", so stop waiting then.
         - name: Wait for upgrade to finish
           ansible.builtin.command: "{{ ceph_shell }} ceph orch upgrade status --format json"
           register: _upgrade
-          until: not (_upgrade.stdout | from_json).in_progress
+          until: >-
+            not (_upgrade.stdout | from_json).in_progress
+            or (_upgrade.stdout | from_json).is_paused | default(false)
+          failed_when: (_upgrade.stdout | from_json).is_paused | default(false)
           retries: 180
           delay: 30
           changed_when: false
+          check_mode: false
 
         - name: Verify all daemons run {{ ceph_version }}
           ansible.builtin.command: "{{ ceph_shell }} ceph versions --format json"
           register: _versions_after
           changed_when: false
+          check_mode: false
           failed_when: >-
             (_versions_after.stdout | from_json).overall.keys()
-            | reject('search', 'ceph version ' ~ ceph_version ~ ' ') | list | length > 0
+            | reject('search', 'ceph version ' ~ (ceph_version | regex_escape) ~ ' ') | list | length > 0

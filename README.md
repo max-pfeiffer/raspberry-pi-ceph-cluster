@@ -48,7 +48,8 @@ no separate cluster (replication) network.
   `ceph_config` in `roles/ceph_cluster/defaults/main.yml`). MDS and monitoring are on
   different nodes so no node runs every memory-hungry daemon at once.
 * All three nodes have the `_admin` label, so `ceph` commands work on any node. If `ceph1`
-  is down, playbooks automatically use another node for cluster-wide commands.
+  is down (or was re-flashed and is empty), playbooks automatically use another node
+  that runs the cluster for cluster-wide commands.
 
 ## Repository layout
 
@@ -62,11 +63,12 @@ inventory/
   host_vars/cephN.yml           Per node labels (ceph1: monitoring, ceph2/3: mds)
 playbooks/
   render-cloud-init.yml         Renders first-boot files into build/cloud-init/<host>/
+  render-specs.yml              Renders the cephadm service specs into build/specs/ for review
   site.yml                      Runs 00 → 40 in order
-  select-admin.yml              Picks the node for cluster-wide commands (ceph1, else first reachable)
-  00-firmware.yml               EEPROM boot order, PCIe in config.txt (one node at a time, health-gated)
+  select-admin.yml              Checks all nodes for an existing cluster, picks the node for cluster-wide commands
+  00-firmware.yml               EEPROM boot order, PCIe in config.txt (one node at a time, reboots health-gated)
   10-base.yml                   Hostname, /etc/hosts, chrony, packages, firewall, unattended-upgrades
-  20-network.yml                Netplan for the 2.5 GbE adapter (one node at a time, health-gated)
+  20-network.yml                Netplan for the 2.5 GbE adapter (one node at a time, changes health-gated)
   30-ceph-prereqs.yml           Podman, pinned cephadm, image pre-pull, optional OSD disk wipe
   40-ceph-cluster.yml           Bootstrap, add hosts, config, services, pools, CephFS
   upgrade-ceph.yml              Rolling Ceph upgrade to `ceph_version`
@@ -76,12 +78,15 @@ roles/                          rpi_firmware, base, network, ceph_prereqs, ceph_
 roles/ceph_cluster/templates/   cephadm service specs (cluster.yml, cephfs.yml)
 scripts/flash-os-disk.sh        Writes Ubuntu + cloud-init onto the OS disk
 scripts/ceph-release-pins.sh    Prints the version pins for a Ceph release
+scripts/check-vault-encrypted.sh  Fails on a plain-text vault.yml (pre-commit, `make lint`)
 ```
 
 Principles:
 
 * **Git is the source of truth.** Every change is made in the repo and applied with
   `make site`. Don't use `ceph config set` by hand for anything that should persist.
+  Removals are explicit: something that is just deleted from the repo stays on the
+  cluster (see "Remove something" under Day-2 operations).
 * **Idempotent.** Running `make site` again changes nothing on a converged cluster.
 * **Declarative Ceph.** Daemons and OSDs are described in cephadm service specs and
   the orchestrator converges to them.
@@ -89,10 +94,14 @@ Principles:
   with the cephadm checksum and the container image digest. Ansible, the linters,
   collections and CI actions are pinned to exact versions; Dependabot proposes updates.
 * **Safe to rerun on a live cluster.** Playbooks that can disrupt a node (firmware,
-  network, reboots) change one node at a time. They first wait for a healthy cluster,
-  and wait again for recovery before moving to the next node.
-* **Secrets encrypted.** They're kept in `vault.yml` with ansible-vault. Rendered
-  cloud-init files are written to `build/`, which is git-ignored.
+  network, reboots) change one node at a time. Before a node is rebooted or its network
+  is reconfigured they wait for a healthy cluster, and wait again for recovery before
+  moving to the next node. A node without pending changes is not gated, so `make site`
+  also works on a degraded cluster. A cluster is only bootstrapped when no node runs
+  Ceph daemons, so an empty (re-flashed) node never starts a second cluster.
+* **Secrets encrypted.** They're kept in `vault.yml` with ansible-vault; pre-commit and
+  `make lint` refuse a plain-text `vault.yml`. Rendered cloud-init files are written to
+  `build/`, which is git-ignored.
 
 ## Setup
 
@@ -133,6 +142,12 @@ uv run ansible-vault encrypt inventory/group_vars/all/vault.yml
 
 Commit the encrypted `vault.yml`. To avoid typing the vault password each time, put it in
 `.vault-pass` (git-ignored, `chmod 600`). The Makefile picks it up automatically.
+
+Once `vault.yml` is committed, CI needs the vault password to render the templates
+(`make test`): add it as the repository secret `ANSIBLE_VAULT_PASSWORD`.
+
+`vault_ceph_grafana_password` is optional. If set, Grafana gets an admin user when it's
+first deployed; otherwise Grafana is read-only.
 
 ### 3. Review the inventory
 
@@ -199,11 +214,13 @@ scp -r build/cloud-init/ceph1 pi@<pi-ip>:
 
 # on the Pi: identify the Transcend disk (NOT the Kingston!)
 ls -l /dev/disk/by-id/ | grep nvme
-sudo ./flash-os-disk.sh ubuntu-*-raspi.img.xz /dev/disk/by-id/nvme-<Transcend…> ./ceph1
+sudo ./flash-os-disk.sh ubuntu-*-raspi.img.xz /dev/disk/by-id/nvme-<Transcend…> ./ceph1 <sha256>
 sudo poweroff
 ```
 
-The script refuses to overwrite the running system's disk and asks for confirmation.
+The script refuses to overwrite the running system's disk or a Kingston disk, asks for
+confirmation, and verifies the image if you pass its SHA256 (from Ubuntu's `SHA256SUMS`)
+as the fourth argument.
 
 **Option B: on your Mac with a USB NVMe enclosure:** flash the image with
 Raspberry Pi Imager ("Use custom", **no** OS customisation), then copy `user-data`,
@@ -239,23 +256,31 @@ make ceph-prereqs ANSIBLE_ARGS="-e wipe_osd_disks=true"   # wipes the Kingston S
 make ceph
 ```
 
-`make firmware` and `make network` wait for `HEALTH_OK` before and after each node once
-the cluster exists. If the cluster has a known, harmless warning, add its check name to
-`ceph_health_allowed_checks` in `inventory/group_vars/ceph/main.yml`, or the run stops
-after about 30 minutes of waiting.
+Once the cluster exists, `make firmware` and `make network` gate their disruptive step
+(the reboot, `netplan apply`) on cluster health: no health checks and all placement
+groups `active+clean`, before and after each node. Nodes without a pending change are
+not gated. If the cluster has a known, harmless warning, add its check name to
+`ceph_health_allowed_checks` in `inventory/group_vars/ceph/main.yml`, or a run with
+pending changes stops after about 30 minutes of waiting. A change that couldn't be
+applied is remembered on the node and applied by the next run.
 
 Use `wipe_osd_disks=true` only if the Kingston disks have old partitions. Without it,
 cephadm ignores disks that aren't empty. The wipe only selects disks whose model matches
-`ceph_osd_device_model`, never touches the root disk, and is refused once the cluster
-exists.
+`ceph_osd_device_model`, never touches the root disk, and is refused on a node that runs
+Ceph daemons or has a `ceph.conf`. A disk that holds Ceph OSD data (for example from an
+earlier cluster) additionally needs `-e wipe_osd_disks_force=true`. Never use that on a
+re-flashed node of a cluster that still exists: its disk is a live OSD (see "Replace a
+node" under Day-2 operations).
 
-`make ceph` bootstraps the cluster on `ceph1` (only if no cluster exists yet), authorizes the cephadm SSH key on all
-nodes, applies the configuration, applies the service specs (hosts, MON, MGR, OSD,
-monitoring), waits until all 3 OSDs are up, then creates the `rbd` pool and the `cephfs`
-file system.
+`make ceph` checks all nodes for an existing cluster and bootstraps one on `ceph1` only
+if no node runs Ceph daemons and every node could be checked. It then authorizes the
+cephadm SSH key on all nodes, applies the configuration, sets the dashboard password,
+applies the service specs (hosts, MON, MGR, OSD, monitoring), waits until all 3 OSDs are
+up, then creates the `rbd` pool and the `cephfs` file system.
 
-The bootstrap output is hidden because it contains the dashboard password. If bootstrap
-fails, rerun with `make ceph ANSIBLE_ARGS="-e ceph_debug=true"` to see it. If a failed bootstrap
+The bootstrap output is hidden because it contains a generated dashboard password
+(replaced by yours right after). If bootstrap fails, rerun with
+`make ceph ANSIBLE_ARGS="-e ceph_debug=true"` to see it. If a failed bootstrap
 leaves a half-built cluster behind, the playbook stops and prints the cleanup commands.
 
 ### 10. Verify
@@ -303,13 +328,17 @@ or `ceph_filesystems` in the inventory.
 | Task                        | How                                                                                                  |
 |-----------------------------|------------------------------------------------------------------------------------------------------|
 | Change configuration        | Edit the inventory / role defaults, run `make site`                                                  |
+| Remove something            | Config option: keep its `ceph_config` entry and add `state: absent`. Service: add it to `ceph_services_absent`. Firewall port: move it to `firewall_ceph_ports_absent`. Then `make site` |
+| Change the dashboard password | Change it in the vault, run `make ceph`                                                            |
+| Review the service specs    | `make specs` renders them into `build/specs/` without touching the cluster                           |
 | Preview a spec change       | `sudo cephadm shell --mount /etc/ceph/specs:/specs -- ceph orch apply -i /specs/cluster.yml --dry-run` |
 | Upgrade Ceph                | `scripts/ceph-release-pins.sh <version>`, copy the three values into `group_vars/ceph/main.yml`, `make upgrade` |
-| Reboot after kernel updates | `make reboot`: requires a healthy cluster, sets `noout`, reboots one node at a time, waits for recovery, always unsets `noout` |
+| Reboot after kernel updates | `make reboot`: requires a healthy cluster, sets `noout`, asks the orchestrator whether each node is safe to stop, reboots one node at a time, waits for recovery, always unsets `noout` |
 | Replace a failed OSD        | `ceph orch osd rm <id> --replace --zap`, swap disk; the OSD spec redeploys it                        |
+| Replace a node (new OS disk) | Flash it as in steps 6 to 8, run `make site` **without** `wipe_osd_disks`. The node rejoins the existing cluster. If its Kingston disk still holds the OSD, bring it back with `ceph cephadm osd activate <host>` |
 | Check memory headroom       | `ceph orch ps` (column `MEM USE`) and `free -h` on each node, after a few days of real load           |
-| Dry run of all changes      | `make check` (`--check --diff`, changes nothing)                                                            |
-| Lint                        | `make lint` (yamllint, ansible-lint, shellcheck; CI runs the same `make deps lint`) |
+| Dry run of all changes      | `make check` (`--check --diff`, changes nothing; reads the live cluster state, so it needs an installed cluster) |
+| Lint and test               | `make lint` (yamllint, ansible-lint, shellcheck, vault check) and `make test` (syntax check, renders cloud-init files and specs); CI runs both |
 
 Unattended-upgrades installs security updates but never reboots a node on its own.
 Upgrades run at staggered times (ceph1 03:00, ceph2 04:00, ceph3 05:00), and
@@ -328,6 +357,16 @@ kernel and library updates with only one node down at a time.
   USB autosuspend is disabled for the RTL8156B via a udev rule to prevent link flaps.
   Use a blue USB 3 port. If the adapter fails, the node is offline: Ceph keeps serving
   from the other two nodes. Repair it through a keyboard and micro-HDMI console.
+* **Memory is tight.** The budget leaves little headroom on 8 GB, `osd_memory_target`
+  is a target rather than a hard limit, and the Ubuntu image has no swap. Watch
+  `ceph orch ps` and `free -h` after a few days of real load; if a node gets close to
+  the limit, lower `osd_memory_target` or the Prometheus retention before adding swap
+  (swapping Ceph daemons hurts more than it helps).
+* **Alerts go nowhere by default.** Alertmanager only shows them in its UI and the
+  dashboard. Set `ceph_alertmanager_webhook_urls` to get notified.
+* **SSH is open to every network** that can route to the nodes (key-only logins). To
+  restrict it, set `firewall_ssh_allowed_networks`; include your workstation's network
+  and the cluster network, or you lock yourself and cephadm out.
 * **Time sync matters.** MONs warn about clock skew above 0.05 s. chrony is managed by the
   `base` role.
 * **Ubuntu rather than Raspberry Pi OS:** Pi OS uses a 16K page kernel on the Pi 5, which

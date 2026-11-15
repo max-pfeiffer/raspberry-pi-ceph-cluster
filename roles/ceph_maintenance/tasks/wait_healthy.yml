@@ -1,21 +1,42 @@
 ---
-# Waits until the cluster reports no health checks except the allowed ones.
+# Waits until the cluster reports no health checks except the allowed ones and
+# all placement groups are active+clean.
 # A no-op while no cluster exists yet (first installation).
-- name: Check whether a cluster exists
+- name: Look for a reachable node with a Ceph configuration
   ansible.builtin.stat:
     path: /etc/ceph/ceph.conf
-  delegate_to: "{{ ceph_maintenance_peer }}"
+  delegate_to: "{{ item }}"
+  loop: "{{ ceph_maintenance_peers }}"
   register: _ceph_maintenance_conf
+  ignore_unreachable: true
 
-- name: Wait for a healthy cluster (checked on {{ ceph_maintenance_peer }})
-  ansible.builtin.command: "{{ ceph_shell }} ceph --connect-timeout 30 health --format json"
-  delegate_to: "{{ ceph_maintenance_peer }}"
-  register: _ceph_maintenance_health
+- name: Select the node that runs the health checks
+  ansible.builtin.set_fact:
+    _ceph_maintenance_reachable: >-
+      {{ _ceph_maintenance_conf.results | selectattr('stat', 'defined') | map(attribute='item') | list }}
+    _ceph_maintenance_peer: >-
+      {{ _ceph_maintenance_conf.results | selectattr('stat', 'defined') | selectattr('stat.exists')
+         | map(attribute='item') | first | default('') }}
+
+- name: Ensure cluster health can be verified
+  ansible.builtin.assert:
+    that: _ceph_maintenance_reachable | length > 0
+    fail_msg: "None of {{ ceph_maintenance_peers }} is reachable, so the cluster health can't be verified."
+    quiet: true
+
+- name: Wait for a healthy cluster (checked on {{ _ceph_maintenance_peer }})
+  ansible.builtin.command: "{{ ceph_shell }} ceph --connect-timeout 30 status --format json"
+  delegate_to: "{{ _ceph_maintenance_peer | default(inventory_hostname, true) }}"
+  register: _ceph_maintenance_status
   until: >-
-    _ceph_maintenance_health.rc == 0 and
-    (_ceph_maintenance_health.stdout | from_json).checks | default({}) | list
-    | difference(ceph_maintenance_allowed_checks) | length == 0
+    _ceph_maintenance_status.rc == 0
+    and ((_ceph_maintenance_status.stdout | from_json).health.checks | default({}) | list
+         | difference(ceph_maintenance_allowed_checks) | length == 0)
+    and (not (ceph_maintenance_require_clean_pgs | bool)
+         or ((_ceph_maintenance_status.stdout | from_json).pgmap.pgs_by_state | default([])
+             | rejectattr('state_name', 'equalto', 'active+clean') | list | length == 0))
   retries: "{{ ceph_maintenance_retries }}"
   delay: "{{ ceph_maintenance_delay }}"
   changed_when: false
-  when: _ceph_maintenance_conf.stat.exists
+  check_mode: false
+  when: _ceph_maintenance_peer | length > 0

@@ -1,23 +1,32 @@
 ---
-# One node at a time, gated on cluster health: a broken netplan change takes
-# down one node, not the whole cluster (the play stops after the first failure).
+# One node at a time: a broken netplan change takes down one node, not the whole
+# cluster (the play stops after the first failure). The configuration is only
+# applied when it changed. Then the cluster must be healthy before, and must
+# have recovered before the next node is touched. Without a pending change the
+# cluster health doesn't matter, so the play also runs on a degraded cluster.
 - name: Network
   hosts: ceph
   become: true
   serial: 1
-  pre_tasks:
-    - name: Wait for a healthy cluster before changing this node
+  tasks:
+    - name: Configure network
       ansible.builtin.include_role:
-        name: ceph_maintenance
-        tasks_from: wait_healthy
-  roles:
-    - network
-  post_tasks:
-    - name: Wait for the node to be reachable again
-      ansible.builtin.wait_for_connection:
-        timeout: 120
+        name: network
 
-    - name: Wait for the cluster to recover
-      ansible.builtin.include_role:
-        name: ceph_maintenance
-        tasks_from: wait_healthy
+    - name: Apply netplan, gated on cluster health
+      when: network_apply_pending | bool
+      block:
+        - name: Wait for a healthy cluster before changing this node
+          ansible.builtin.include_role:
+            name: ceph_maintenance
+            tasks_from: wait_healthy
+
+        - name: Apply
+          ansible.builtin.include_role:
+            name: network
+            tasks_from: apply
+
+        - name: Wait for the cluster to recover
+          ansible.builtin.include_role:
+            name: ceph_maintenance
+            tasks_from: wait_healthy

@@ -10,15 +10,31 @@ ceph_mds_count: 2
 ceph_monitoring_enabled: true
 # Prometheus memory grows with retained samples; keep history short on 8 GB nodes.
 ceph_prometheus_retention_time: 7d
+# Webhooks that receive alerts from Alertmanager, e.g. an ntfy or Slack bridge.
+# Without any, alerts are only visible in the dashboard and the Alertmanager UI.
+ceph_alertmanager_webhook_urls: []
+# Creates the Grafana admin user when Grafana is first deployed. Without it
+# Grafana has no admin user and is read-only (anonymous viewer access).
+ceph_grafana_admin_password: "{{ vault_ceph_grafana_password | default('') }}"
 
 # Memory budget per 8 GB node: OSD + MON + MGR on every node, plus the monitoring
 # stack on ceph1 and the MDS daemons on ceph2/ceph3 (see placement labels).
+# To remove an option from the cluster again, keep its entry and add
+# `state: absent` (value is then ignored). Entries that are just deleted from
+# this list stay set in the cluster.
 ceph_config:
   - { who: osd, option: osd_memory_target_autotune, value: "false" }
   - { who: osd, option: osd_memory_target, value: "2684354560" }      # 2.5 GiB
   - { who: mon, option: mon_memory_target, value: "1073741824" }      # 1 GiB
   - { who: mds, option: mds_cache_memory_limit, value: "1073741824" } # 1 GiB
   - { who: mon, option: mon_allow_pool_delete, value: "false" }
+
+# Orchestrator services to remove (names as shown by `ceph orch ls`). A service
+# that is just deleted from the spec templates keeps running, so list it here.
+# The monitoring stack is removed when ceph_monitoring_enabled is false.
+ceph_services_absent: >-
+  {{ [] if ceph_monitoring_enabled | bool
+     else ['prometheus', 'grafana', 'alertmanager', 'node-exporter', 'ceph-exporter'] }}
 
 # Replicated RBD pools (size 3 / min_size 2 are the Ceph defaults).
 ceph_rbd_pools:
@@ -29,3 +45,8 @@ ceph_filesystems:
   - name: cephfs
 
 ceph_expected_osds: "{{ groups['ceph'] | length }}"
+
+# The dashboard doesn't reveal its password, so a fingerprint of the applied
+# one is kept in the cluster's config-key store to detect changes.
+ceph_dashboard_password_key: ansible/dashboard-password-sha256
+ceph_dashboard_password_fingerprint: "{{ (ceph_dashboard_user ~ ':' ~ ceph_dashboard_password) | hash('sha256') }}"

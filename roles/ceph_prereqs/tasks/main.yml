@@ -13,10 +13,18 @@
     mode: "0755"
     checksum: "sha256:{{ cephadm_sha256 }}"
 
+# Only pull when the image is missing, so reruns don't depend on the registry.
+- name: Check whether the Ceph container image is present
+  ansible.builtin.command: podman image exists {{ ceph_image }}
+  register: _image
+  changed_when: false
+  failed_when: _image.rc not in [0, 1]
+  check_mode: false
+
 - name: Pre-pull Ceph container image
   ansible.builtin.command: podman pull {{ ceph_image }}
-  register: _pull
-  changed_when: "'Writing manifest' in _pull.stderr"
+  when: _image.rc != 0
+  changed_when: true
 
 - name: Find OSD devices
   ansible.builtin.set_fact:
@@ -43,17 +51,47 @@
 - name: Wipe OSD device
   when: wipe_osd_disks | bool
   block:
-    - name: Check whether the cluster is already bootstrapped
+    - name: Check whether this node has a Ceph configuration
       ansible.builtin.stat:
         path: /etc/ceph/ceph.conf
       register: _ceph_conf
 
+    - name: List Ceph daemons on this node
+      ansible.builtin.command: "{{ cephadm_path }} ls --no-detail"
+      register: _wipe_daemons
+      changed_when: false
+      check_mode: false
+
     - name: Refuse to wipe disks of a running cluster
       ansible.builtin.assert:
-        that: not _ceph_conf.stat.exists
+        that:
+          - not _ceph_conf.stat.exists
+          - _wipe_daemons.stdout | from_json | length == 0
         fail_msg: >-
-          The cluster already exists. Replace OSDs with
+          This node is part of a cluster. Replace OSDs with
           `ceph orch osd rm <id> --replace --zap` instead.
+
+    # A re-flashed node has neither ceph.conf nor daemons, but its disk may
+    # still be a live OSD of the cluster on the other nodes.
+    - name: Look for Ceph OSD data on /dev/{{ _osd_devices[0] }}
+      ansible.builtin.shell: |
+        set -euo pipefail
+        pvs --noheadings -o pv_name,vg_name 2>/dev/null \
+          | awk -v dev=/dev/{{ _osd_devices[0] }} 'index($1, dev) == 1 && $2 ~ /^ceph-/ { print $2 }'
+      args:
+        executable: /bin/bash
+      register: _osd_vgs
+      changed_when: false
+      check_mode: false
+
+    - name: Refuse to wipe a disk that holds Ceph OSD data
+      ansible.builtin.assert:
+        that: _osd_vgs.stdout_lines | length == 0 or wipe_osd_disks_force | bool
+        fail_msg: >-
+          /dev/{{ _osd_devices[0] }} holds Ceph OSD data ({{ _osd_vgs.stdout_lines | join(', ') }}).
+          If its cluster still exists, don't wipe it: add the node back and run
+          `ceph cephadm osd activate {{ inventory_hostname }}`. To destroy the data
+          (e.g. a disk from a cluster that was torn down), add `-e wipe_osd_disks_force=true`.
 
     - name: Wipe /dev/{{ _osd_devices[0] }}
       ansible.builtin.shell: |
@@ -71,3 +109,4 @@
 - name: Verify host meets cephadm requirements
   ansible.builtin.command: "{{ cephadm_path }} check-host"
   changed_when: false
+  check_mode: false

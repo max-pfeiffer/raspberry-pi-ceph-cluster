@@ -1,4 +1,6 @@
 ---
+# Configures the firmware but doesn't reboot. Sets rpi_firmware_reboot_pending;
+# the caller reboots with tasks_from: reboot (see playbooks/00-firmware.yml).
 - name: Install Raspberry Pi firmware tools
   ansible.builtin.apt:
     name: rpi-eeprom
@@ -14,7 +16,7 @@
     block: |
       [all]
       {{ rpi_config_txt_lines | join('\n') }}
-  notify: Reboot
+  register: _rpi_config_txt
 
 - name: Manage bootloader EEPROM
   when: rpi_manage_eeprom
@@ -23,6 +25,7 @@
       ansible.builtin.command: rpi-eeprom-config
       register: _eeprom
       changed_when: false
+      check_mode: false
 
     - name: Determine whether EEPROM settings differ
       ansible.builtin.set_fact:
@@ -48,6 +51,26 @@
 
     - name: Apply EEPROM configuration (takes effect after reboot)
       ansible.builtin.command: rpi-eeprom-config --apply /run/eeprom-desired.conf
+      register: _eeprom_apply
       when: _eeprom_needs_update | bool
       changed_when: true
-      notify: Reboot
+
+# The marker lives on tmpfs: it survives a failed or interrupted run, so the
+# pending reboot isn't forgotten, and disappears with the reboot.
+- name: Remember that a reboot is pending
+  ansible.builtin.file:
+    path: "{{ rpi_reboot_marker }}"
+    state: touch
+    mode: "0644"
+  when: _rpi_config_txt is changed or _eeprom_apply is changed
+
+- name: Check for a pending reboot
+  ansible.builtin.stat:
+    path: "{{ rpi_reboot_marker }}"
+  register: _rpi_reboot_marker
+
+- name: Record whether a reboot is pending
+  ansible.builtin.set_fact:
+    rpi_firmware_reboot_pending: >-
+      {{ _rpi_reboot_marker.stat.exists or _rpi_config_txt is changed
+         or (rpi_manage_eeprom and _eeprom_needs_update | default(false) | bool) }}

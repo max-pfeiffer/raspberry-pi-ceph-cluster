@@ -1,36 +1,40 @@
 ---
+# Whether a cluster exists is decided across all nodes by playbooks/select-admin.yml
+# (ceph_cluster_fsids, ceph_unchecked_nodes), not from this node alone: an empty
+# node next to an existing cluster (e.g. after re-flashing it) must not bootstrap
+# a second cluster.
 - name: Ensure dashboard password is set
   ansible.builtin.assert:
     that: ceph_dashboard_password is defined and ceph_dashboard_password | length >= 12
     fail_msg: "Set vault_ceph_dashboard_password in inventory/group_vars/all/vault.yml (see README)."
     quiet: true
 
-- name: List Ceph daemons on this node
-  ansible.builtin.command: "{{ cephadm_path }} ls --no-detail"
-  register: _daemons
-  changed_when: false
-
 - name: Check for an existing ceph.conf
   ansible.builtin.stat:
     path: /etc/ceph/ceph.conf
   register: _ceph_conf
 
-- name: Determine cluster state
-  ansible.builtin.set_fact:
-    _cluster_fsids: "{{ _daemons.stdout | from_json | map(attribute='fsid') | unique | list }}"
-
-# All nodes run daemons once the cluster exists, so ceph.conf without any daemon
-# means an earlier bootstrap failed halfway.
-- name: Refuse to continue on a half-bootstrapped or ambiguous node
+# The admin node runs daemons once the cluster exists, so ceph.conf without any
+# daemon means an earlier bootstrap failed halfway.
+- name: Refuse to continue on a half-bootstrapped node
   ansible.builtin.assert:
-    that:
-      - _cluster_fsids | length <= 1
-      - _cluster_fsids | length == 1 or not _ceph_conf.stat.exists
+    that: ceph_cluster_fsids | length == 1 or not _ceph_conf.stat.exists
     fail_msg: >-
-      Found ceph.conf but daemons of fsids {{ _cluster_fsids }} on {{ inventory_hostname }}.
+      Found ceph.conf but no Ceph daemons on {{ inventory_hostname }}.
       A previous bootstrap probably failed. Inspect it, then clean up with
       `cephadm rm-cluster --fsid <fsid> --force` and `rm /etc/ceph/ceph.conf` and rerun.
 
+- name: Refuse to bootstrap unless every node was checked for an existing cluster
+  ansible.builtin.assert:
+    that: ceph_unchecked_nodes | length == 0
+    fail_msg: >-
+      No cluster was found, but {{ ceph_unchecked_nodes }} could not be checked (unreachable or
+      excluded with --limit). Bootstrapping now could create a second cluster next to an
+      existing one. Make all nodes reachable and rerun without --limit.
+  when: ceph_cluster_fsids | length == 0
+
+# No --initial-dashboard-password: it would be visible in the process list.
+# cephadm generates a random one, and converge.yml sets the real one from a file.
 - name: Bootstrap cluster
   ansible.builtin.command:
     argv:
@@ -43,10 +47,8 @@
       - --skip-monitoring-stack
       - --initial-dashboard-user
       - "{{ ceph_dashboard_user }}"
-      - --initial-dashboard-password
-      - "{{ ceph_dashboard_password }}"
       - --dashboard-password-noupdate
-  when: _cluster_fsids | length == 0
+  when: ceph_cluster_fsids | length == 0
   changed_when: true
   no_log: "{{ not (ceph_debug | bool) }}"
 
@@ -54,3 +56,5 @@
   ansible.builtin.command: "{{ ceph_shell }} ceph cephadm get-pub-key"
   register: _ceph_pub
   changed_when: false
+  check_mode: false
+  when: ceph_cluster_fsids | length > 0 or not ansible_check_mode

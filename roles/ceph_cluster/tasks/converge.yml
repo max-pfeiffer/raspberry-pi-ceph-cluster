@@ -3,18 +3,77 @@
   ansible.builtin.command: "{{ ceph_shell }} ceph config dump --format json"
   register: _config_dump
   changed_when: false
+  check_mode: false
 
 - name: Set cluster configuration
   ansible.builtin.command: "{{ ceph_shell }} ceph config set {{ item.who }} {{ item.option }} {{ item.value }}"
   loop: "{{ ceph_config }}"
   loop_control:
     label: "{{ item.who }}/{{ item.option }}={{ item.value }}"
-  when: >-
-    (_config_dump.stdout | from_json
-     | selectattr('section', 'equalto', item.who)
-     | selectattr('name', 'equalto', item.option)
-     | map(attribute='value') | first | default('')) != item.value
+  when:
+    - item.state | default('present') == 'present'
+    - >-
+      (_config_dump.stdout | from_json
+       | selectattr('section', 'equalto', item.who)
+       | selectattr('name', 'equalto', item.option)
+       | map(attribute='value') | first | default('')) != item.value
   changed_when: true
+
+- name: Remove cluster configuration
+  ansible.builtin.command: "{{ ceph_shell }} ceph config rm {{ item.who }} {{ item.option }}"
+  loop: "{{ ceph_config }}"
+  loop_control:
+    label: "{{ item.who }}/{{ item.option }}"
+  when:
+    - item.state | default('present') == 'absent'
+    - >-
+      _config_dump.stdout | from_json
+      | selectattr('section', 'equalto', item.who)
+      | selectattr('name', 'equalto', item.option) | list | length > 0
+  changed_when: true
+
+# The password is passed in a file, never on a command line.
+- name: Read the fingerprint of the applied dashboard password
+  ansible.builtin.command: "{{ ceph_shell }} ceph config-key get {{ ceph_dashboard_password_key }}"
+  register: _dashboard_fingerprint
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Set dashboard password
+  when:
+    - not ansible_check_mode
+    - _dashboard_fingerprint.stdout | trim != ceph_dashboard_password_fingerprint
+  block:
+    - name: Create a temporary directory for the password file
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: ceph-dashboard-
+      register: _dashboard_tmp
+
+    - name: Write the password file
+      ansible.builtin.copy:
+        dest: "{{ _dashboard_tmp.path }}/password"
+        content: "{{ ceph_dashboard_password }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Set the password of dashboard user {{ ceph_dashboard_user }}
+      ansible.builtin.command: >-
+        {{ cephadm_path }} shell --mount {{ _dashboard_tmp.path }}:/dashboard --
+        ceph dashboard ac-user-set-password --force-password {{ ceph_dashboard_user }} -i /dashboard/password
+      changed_when: true
+
+    - name: Store the fingerprint of the applied dashboard password
+      ansible.builtin.command: >-
+        {{ ceph_shell }} ceph config-key set {{ ceph_dashboard_password_key }} {{ ceph_dashboard_password_fingerprint }}
+      changed_when: true
+  always:
+    - name: Remove the password file
+      ansible.builtin.file:
+        path: "{{ _dashboard_tmp.path }}"
+        state: absent
+      when: _dashboard_tmp.path is defined
 
 - name: Create specs directory
   ansible.builtin.file:
@@ -34,6 +93,18 @@
   vars:
     ceph_spec: cluster.yml
 
+- name: List orchestrator services
+  ansible.builtin.command: "{{ ceph_shell }} ceph orch ls --format json"
+  register: _services
+  changed_when: false
+  check_mode: false
+
+- name: Remove services that are no longer wanted
+  ansible.builtin.command: "{{ ceph_shell }} ceph orch rm {{ item }}"
+  loop: "{{ ceph_services_absent }}"
+  when: item in (_services.stdout | from_json | map(attribute='service_name') | list)
+  changed_when: true
+
 - name: Wait for all OSDs to be up
   ansible.builtin.command: "{{ ceph_shell }} ceph osd stat --format json"
   register: _osd_stat
@@ -41,23 +112,36 @@
   retries: 60
   delay: 20
   changed_when: false
+  check_mode: false
 
 - name: List pools
-  ansible.builtin.command: "{{ ceph_shell }} ceph osd pool ls --format json"
+  ansible.builtin.command: "{{ ceph_shell }} ceph osd pool ls detail --format json"
   register: _pools
   changed_when: false
+  check_mode: false
 
 - name: Create RBD pools
-  ansible.builtin.command: >-
-    {{ ceph_shell }} sh -c 'ceph osd pool create {{ item.name }} && rbd pool init {{ item.name }}'
+  ansible.builtin.command: "{{ ceph_shell }} ceph osd pool create {{ item.name }}"
   loop: "{{ ceph_rbd_pools }}"
-  when: item.name not in (_pools.stdout | from_json)
+  when: item.name not in (_pools.stdout | from_json | map(attribute='pool_name') | list)
+  changed_when: true
+
+# Separate from the creation, so a pool whose initialization failed is
+# initialized by the next run.
+- name: Initialize RBD pools
+  ansible.builtin.command: "{{ ceph_shell }} rbd pool init {{ item.name }}"
+  loop: "{{ ceph_rbd_pools }}"
+  when: >-
+    'rbd' not in (_pools.stdout | from_json
+                  | selectattr('pool_name', 'equalto', item.name)
+                  | map(attribute='application_metadata') | first | default({}))
   changed_when: true
 
 - name: List file systems
   ansible.builtin.command: "{{ ceph_shell }} ceph fs ls --format json"
   register: _filesystems
   changed_when: false
+  check_mode: false
 
 - name: Create CephFS volumes
   ansible.builtin.command: "{{ ceph_shell }} ceph fs volume create {{ item.name }}"
@@ -75,6 +159,7 @@
   ansible.builtin.command: "{{ ceph_shell }} ceph -s"
   register: _status
   changed_when: false
+  check_mode: false
 
 - name: Print cluster status
   ansible.builtin.debug:

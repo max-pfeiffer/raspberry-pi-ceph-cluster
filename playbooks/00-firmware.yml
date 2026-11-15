@@ -1,20 +1,31 @@
 ---
-# One node at a time: the cluster must be healthy before a node is touched, and
-# must have recovered from its reboot before the next node is touched.
+# One node at a time. A node is only rebooted when its firmware settings
+# changed. Then the cluster must be healthy before the reboot, and must have
+# recovered before the next node is touched. Without a pending change the
+# cluster health doesn't matter, so the play also runs on a degraded cluster.
 - name: Raspberry Pi firmware and boot configuration
   hosts: ceph
   become: true
   serial: 1
-  pre_tasks:
-    - name: Wait for a healthy cluster before changing this node
+  tasks:
+    - name: Configure firmware
       ansible.builtin.include_role:
-        name: ceph_maintenance
-        tasks_from: wait_healthy
-  roles:
-    - rpi_firmware
-  post_tasks:
-    # Handlers (the reboot) have run by now.
-    - name: Wait for the cluster to recover
-      ansible.builtin.include_role:
-        name: ceph_maintenance
-        tasks_from: wait_healthy
+        name: rpi_firmware
+
+    - name: Reboot, gated on cluster health
+      when: rpi_firmware_reboot_pending | bool
+      block:
+        - name: Wait for a healthy cluster before rebooting this node
+          ansible.builtin.include_role:
+            name: ceph_maintenance
+            tasks_from: wait_healthy
+
+        - name: Reboot
+          ansible.builtin.include_role:
+            name: rpi_firmware
+            tasks_from: reboot
+
+        - name: Wait for the cluster to recover
+          ansible.builtin.include_role:
+            name: ceph_maintenance
+            tasks_from: wait_healthy

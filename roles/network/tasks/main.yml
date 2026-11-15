@@ -1,4 +1,7 @@
 ---
+# Writes the configuration but doesn't apply it. Sets network_apply_pending;
+# the caller applies it with tasks_from: apply (see playbooks/20-network.yml).
+
 # netplan would assign the same IP to every interface matching the pattern.
 - name: Ensure exactly one interface matches {{ public_interface_match }}
   ansible.builtin.assert:
@@ -19,7 +22,7 @@
     src: netplan.yaml.j2
     dest: "{{ network_netplan_file }}"
     mode: "0600"
-  notify: Apply netplan
+  register: _netplan
 
 - name: Stop cloud-init from managing the network
   ansible.builtin.copy:
@@ -31,4 +34,23 @@
   ansible.builtin.file:
     path: /etc/netplan/50-cloud-init.yaml
     state: absent
-  notify: Apply netplan
+  register: _netplan_cloud_init
+
+# The marker lives on tmpfs: it survives a failed or interrupted run, so the
+# pending apply isn't forgotten, and disappears with a reboot (which applies
+# the configuration anyway).
+- name: Remember that the netplan configuration must be applied
+  ansible.builtin.file:
+    path: "{{ network_apply_marker }}"
+    state: touch
+    mode: "0644"
+  when: _netplan is changed or _netplan_cloud_init is changed
+
+- name: Check for a pending netplan apply
+  ansible.builtin.stat:
+    path: "{{ network_apply_marker }}"
+  register: _network_apply_marker
+
+- name: Record whether the netplan configuration must be applied
+  ansible.builtin.set_fact:
+    network_apply_pending: "{{ _network_apply_marker.stat.exists or _netplan is changed or _netplan_cloud_init is changed }}"

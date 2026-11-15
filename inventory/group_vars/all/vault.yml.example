@@ -3,3 +3,5 @@
 #   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
 #   uv run ansible-vault encrypt inventory/group_vars/all/vault.yml
 vault_ceph_dashboard_password: "change-me-to-something-long"
+# Optional: creates the Grafana admin user when Grafana is first deployed.
+# vault_ceph_grafana_password: "change-me-too"

@@ -14,3 +14,6 @@ rpi_manage_eeprom: true
 rpi_eeprom_config:
   BOOT_ORDER: "0xf416"
   PCIE_PROBE: "1"
+
+# Exists while a change waits for a reboot (on tmpfs, so a reboot clears it).
+rpi_reboot_marker: /run/rpi-firmware-reboot-required

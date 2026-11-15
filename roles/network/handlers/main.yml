@@ -1,8 +1,11 @@
 ---
+# Reloading alone would apply the rules only when the adapter is plugged in
+# again; the trigger replays the "add" event for adapters that are already there.
 - name: Reload udev
-  ansible.builtin.command: udevadm control --reload-rules
-  changed_when: true
-
-- name: Apply netplan
-  ansible.builtin.shell: netplan generate && netplan apply
+  ansible.builtin.shell: >-
+    udevadm control --reload-rules
+    {% for id in network_usb_nic_ids %}
+    && udevadm trigger --action=add --subsystem-match=usb
+    --attr-match=idVendor={{ id.vendor }} --attr-match=idProduct={{ id.product }}
+    {% endfor %}
   changed_when: true

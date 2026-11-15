@@ -48,9 +48,18 @@ service_type: grafana
 placement:
   label: monitoring
   count: 1
+{% if ceph_grafana_admin_password %}
+spec:
+  initial_admin_password: {{ ceph_grafana_admin_password | to_json }}
+{% endif %}
 ---
 service_type: alertmanager
 placement:
   label: monitoring
   count: 1
+{% if ceph_alertmanager_webhook_urls %}
+spec:
+  user_data:
+    default_webhook_urls: {{ ceph_alertmanager_webhook_urls | to_json }}
+{% endif %}
 {% endif %}

@@ -4,19 +4,25 @@
 #
 # Run on Linux as root, e.g. on the Pi itself booted from an SD card.
 #
-# Usage: flash-os-disk.sh <ubuntu-...-raspi.img.xz> <target-disk> <cloud-init-dir>
+# Usage: flash-os-disk.sh <ubuntu-...-raspi.img.xz> <target-disk> <cloud-init-dir> [image-sha256]
 #   e.g. flash-os-disk.sh ubuntu-26.04-preinstalled-server-arm64+raspi.img.xz \
-#          /dev/disk/by-id/nvme-TS256GMTE110S_XXXX ./ceph1
+#          /dev/disk/by-id/nvme-TS256GMTE110S_XXXX ./ceph1 <sha256 from SHA256SUMS>
+#
+# Refuses a Kingston disk (the Ceph OSD disk). Override the patterns with
+# OSD_DISK_MODEL / OS_DISK_MODEL if your hardware differs.
 set -euo pipefail
 
-if [[ $# -ne 3 ]]; then
-  sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+if [[ $# -lt 3 || $# -gt 4 ]]; then
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 fi
 
 image=$1
 target=$(readlink -f "$2")
 cloud_init_dir=$3
+image_sha256=${4:-}
+osd_disk_model=${OSD_DISK_MODEL:-KINGSTON}
+os_disk_model=${OS_DISK_MODEL:-110S}
 
 [[ $EUID -eq 0 ]] || { echo "Must run as root." >&2; exit 1; }
 [[ -f $image ]] || { echo "Image not found: $image" >&2; exit 1; }
@@ -33,6 +39,22 @@ fi
 if lsblk -no MOUNTPOINTS "$target" | grep -q .; then
   echo "Partitions of $target are mounted. Unmount them first." >&2
   exit 1
+fi
+
+model=$(lsblk -dno MODEL "$target")
+if [[ $model == *"$osd_disk_model"* ]]; then
+  echo "Refusing to flash $target ($model): it looks like the Ceph OSD disk." >&2
+  exit 1
+fi
+if [[ $model != *"$os_disk_model"* ]]; then
+  echo "WARNING: $target ($model) does not look like the OS disk (expected a model containing '$os_disk_model')." >&2
+fi
+
+if [[ -n $image_sha256 ]]; then
+  echo "Verifying checksum of $image ..."
+  echo "$image_sha256  $image" | sha256sum --check --quiet
+else
+  echo "WARNING: no checksum given, the image is not verified." >&2
 fi
 
 lsblk -o NAME,SIZE,MODEL,SERIAL "$target"

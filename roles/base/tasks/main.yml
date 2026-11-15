@@ -23,6 +23,12 @@
     update_cache: true
     cache_valid_time: 3600
 
+# Not every release ships the right/ time zones that `leapsectz` needs.
+- name: Check for the leap second time zone
+  ansible.builtin.stat:
+    path: /usr/share/zoneinfo/right/UTC
+  register: _leap_tz
+
 - name: Configure chrony
   ansible.builtin.template:
     src: chrony.conf.j2
@@ -85,8 +91,19 @@
     - name: Allow SSH
       community.general.ufw:
         rule: allow
+        src: "{{ item }}"
         port: "22"
         proto: tcp
+      loop: "{{ firewall_ssh_allowed_networks }}"
+
+    # Only after the narrower rules above exist.
+    - name: Remove the open SSH rule when SSH is restricted to networks
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+        delete: true
+      when: "'any' not in firewall_ssh_allowed_networks"
 
     - name: Allow Ceph ports from trusted networks
       community.general.ufw:
@@ -95,6 +112,15 @@
         port: "{{ item.1 }}"
         proto: tcp
       loop: "{{ firewall_allowed_networks | product(firewall_ceph_ports) | list }}"
+
+    - name: Close ports that are no longer wanted
+      community.general.ufw:
+        rule: allow
+        src: "{{ item.0 }}"
+        port: "{{ item.1 }}"
+        proto: tcp
+        delete: true
+      loop: "{{ firewall_allowed_networks | product(firewall_ceph_ports_absent) | list }}"
 
     - name: Enable firewall with default deny
       community.general.ufw:

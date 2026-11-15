@@ -2,7 +2,7 @@
 - name: Select admin node
   ansible.builtin.import_playbook: select-admin.yml
 
-- name: Bootstrap Ceph (only if no cluster exists yet)
+- name: Bootstrap Ceph (only if no cluster exists yet on any node)
   hosts: ceph_admin
   become: true
   tasks:
@@ -11,6 +11,8 @@
         name: ceph_cluster
         tasks_from: bootstrap
 
+# In check mode nothing is bootstrapped, so without a cluster there is nothing
+# to compare against and the remaining plays are skipped.
 - name: Authorize cephadm on all nodes
   hosts: ceph
   become: true
@@ -19,6 +21,7 @@
       ansible.builtin.include_role:
         name: ceph_cluster
         tasks_from: authorize
+      when: ceph_cluster_fsids | length > 0 or not ansible_check_mode
 
 - name: Converge Ceph services, configuration, pools and file systems
   hosts: ceph_admin
@@ -28,3 +31,4 @@
       ansible.builtin.include_role:
         name: ceph_cluster
         tasks_from: converge
+      when: ceph_cluster_fsids | length > 0 or not ansible_check_mode

@@ -1,7 +1,13 @@
 ---
-# Picks the node that runs cluster-wide Ceph commands: the ceph_bootstrap node if
-# it's reachable, otherwise the first reachable node (all nodes are _admin nodes).
-# The result is the in-memory group `ceph_admin`.
+# Checks every node for an existing cluster and picks the node that runs
+# cluster-wide Ceph commands. Results, set on all reachable nodes:
+#   ceph_cluster_fsids    fsids of the Ceph daemons found on the reachable nodes
+#   ceph_cluster_nodes    reachable nodes that run Ceph daemons
+#   ceph_unchecked_nodes  inventory nodes that were not checked (unreachable or
+#                         excluded with --limit)
+# The in-memory group `ceph_admin` holds the selected node: a node that runs
+# daemons of the cluster (the ceph_bootstrap node if it qualifies). Without a
+# cluster it's the ceph_bootstrap node, or else the first reachable node.
 - name: Select the Ceph admin node
   hosts: ceph
   gather_facts: false
@@ -9,9 +15,46 @@
     - name: Check reachability
       ansible.builtin.ping:
 
+    - name: Check for cephadm
+      ansible.builtin.stat:
+        path: "{{ cephadm_path }}"
+      register: _cephadm_bin
+
+    - name: List Ceph daemons
+      ansible.builtin.command: "{{ cephadm_path }} ls --no-detail"
+      become: true
+      register: _cephadm_ls
+      changed_when: false
+      check_mode: false
+      when: _cephadm_bin.stat.exists
+
+    - name: Record the cluster fsids found on this node
+      ansible.builtin.set_fact:
+        ceph_node_fsids: "{{ _cephadm_ls.stdout | default('[]', true) | from_json | map(attribute='fsid') | unique | list }}"
+
+    - name: Determine the cluster state across all nodes
+      ansible.builtin.set_fact:
+        ceph_cluster_fsids: "{{ ansible_play_hosts | map('extract', hostvars, 'ceph_node_fsids') | flatten | unique | list }}"
+        ceph_cluster_nodes: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('ceph_node_fsids')
+             | map(attribute='inventory_hostname') | list }}
+        ceph_unchecked_nodes: "{{ groups['ceph'] | difference(ansible_play_hosts) }}"
+      run_once: true
+
+    # Not run_once: every node must fail, or the play would go on with the rest.
+    - name: Refuse to continue when nodes belong to different clusters
+      ansible.builtin.assert:
+        that: ceph_cluster_fsids | length <= 1
+        fail_msg: >-
+          Found daemons of more than one cluster: {{ ceph_cluster_fsids }}. Inspect the nodes with
+          `cephadm ls` and remove the stale cluster with `cephadm rm-cluster --fsid <fsid> --force`.
+        quiet: true
+
     - name: Add the selected node to group ceph_admin
       ansible.builtin.add_host:
-        name: "{{ ansible_play_hosts | intersect(groups['ceph_bootstrap']) | first | default(ansible_play_hosts | first) }}"
+        name: "{{ (_candidates | intersect(groups['ceph_bootstrap']) + _candidates) | first }}"
         groups: ceph_admin
+      vars:
+        _candidates: "{{ ceph_cluster_nodes | default(ansible_play_hosts, true) }}"
       run_once: true
       changed_when: false

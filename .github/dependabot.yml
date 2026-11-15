@@ -1,7 +1,8 @@
 ---
-# Proposes version bumps for the pinned tooling. Ansible collections
-# (requirements.yml), pre-commit hooks (`pre-commit autoupdate`) and the Ceph
-# release are bumped by hand.
+# Proposes version bumps for the pinned tooling, including the linters that
+# pre-commit runs from the uv environment. Ansible collections
+# (requirements.yml), the pre-commit-hooks repo (`pre-commit autoupdate`) and
+# the Ceph release are bumped by hand.
 version: 2
 updates:
   # Updates pyproject.toml and uv.lock.
