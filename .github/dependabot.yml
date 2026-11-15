@@ -1,0 +1,15 @@
+---
+# Proposes version bumps for the pinned tooling. Ansible collections
+# (requirements.yml), pre-commit hooks (`pre-commit autoupdate`) and the Ceph
+# release are bumped by hand.
+version: 2
+updates:
+  # Updates pyproject.toml and uv.lock.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

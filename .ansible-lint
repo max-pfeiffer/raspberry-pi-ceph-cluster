@@ -1,7 +1,10 @@
 ---
 profile: production
+# Use the collections installed by `make deps` instead of downloading its own copy.
+offline: true
 exclude_paths:
   - .venv/
+  - collections/
   - build/
   - .github/
   - .idea/

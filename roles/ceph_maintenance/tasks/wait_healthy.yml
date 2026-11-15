@@ -1,0 +1,21 @@
+---
+# Waits until the cluster reports no health checks except the allowed ones.
+# A no-op while no cluster exists yet (first installation).
+- name: Check whether a cluster exists
+  ansible.builtin.stat:
+    path: /etc/ceph/ceph.conf
+  delegate_to: "{{ ceph_maintenance_peer }}"
+  register: _ceph_maintenance_conf
+
+- name: Wait for a healthy cluster (checked on {{ ceph_maintenance_peer }})
+  ansible.builtin.command: "{{ ceph_shell }} ceph --connect-timeout 30 health --format json"
+  delegate_to: "{{ ceph_maintenance_peer }}"
+  register: _ceph_maintenance_health
+  until: >-
+    _ceph_maintenance_health.rc == 0 and
+    (_ceph_maintenance_health.stdout | from_json).checks | default({}) | list
+    | difference(ceph_maintenance_allowed_checks) | length == 0
+  retries: "{{ ceph_maintenance_retries }}"
+  delay: "{{ ceph_maintenance_delay }}"
+  changed_when: false
+  when: _ceph_maintenance_conf.stat.exists

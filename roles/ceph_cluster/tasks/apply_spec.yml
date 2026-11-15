@@ -1,0 +1,19 @@
+---
+# Applies one spec file. `ceph orch apply` is declarative and always succeeds, so
+# changes are detected by comparing the orchestrator's stored state before/after.
+- name: Read orchestrator state before applying {{ ceph_spec }}
+  ansible.builtin.command: >-
+    {{ ceph_shell }} sh -c 'ceph orch ls --export --format json && ceph orch host ls --format json'
+  register: _orch_before
+  changed_when: false
+
+- name: Apply {{ ceph_spec }}
+  ansible.builtin.command: >-
+    {{ cephadm_path }} shell --mount {{ ceph_specs_dir }}:/specs -- ceph orch apply -i /specs/{{ ceph_spec }}
+  changed_when: false
+
+- name: Read orchestrator state after applying {{ ceph_spec }}
+  ansible.builtin.command: >-
+    {{ ceph_shell }} sh -c 'ceph orch ls --export --format json && ceph orch host ls --format json'
+  register: _orch_after
+  changed_when: _orch_before.stdout != _orch_after.stdout

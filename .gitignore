@@ -4,6 +4,8 @@ build/
 # Local secrets
 .vault-pass
 
-# Python / Ansible
+# Python / Ansible (recreated by `make deps`)
 .venv/
+collections/
+.ansible/
 *.retry

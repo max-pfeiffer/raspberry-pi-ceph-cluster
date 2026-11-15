@@ -6,21 +6,17 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
-          python-version: "3.12"
-      - name: Install tooling
-        run: |
-          pip install -r requirements.txt
-          ansible-galaxy collection install -r requirements.yml
-      - name: Shellcheck scripts
-        run: shellcheck scripts/*.sh
-      - name: yamllint
-        run: yamllint .
-      - name: ansible-lint
-        run: ansible-lint
+          enable-cache: true
+      # Same entry point as locally: installs the locked environment, then lints.
+      - name: Lint
+        run: make deps lint

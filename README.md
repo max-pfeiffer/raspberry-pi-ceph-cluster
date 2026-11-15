@@ -98,22 +98,37 @@ Principles:
 
 ### 1. Prepare your workstation
 
-Requires Python 3 and an SSH key (`~/.ssh/id_ed25519.pub` by default, see
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/), GNU Make (the
+macOS default 3.81 works) and an SSH key (`~/.ssh/id_ed25519.pub` by default, see
 `admin_ssh_public_keys` in `inventory/group_vars/all/main.yml`).
 
 ```shell
-make deps                 # creates .venv with ansible-core, ansible-lint, yamllint + collections
-source .venv/bin/activate
+make deps     # Python (from .python-version), locked packages into .venv, collections into ./collections
+make hooks    # optional: lint on each commit with pre-commit
 ```
 
-Optional: run `pip install pre-commit && pre-commit install` to lint on each commit.
+You don't need to run `make deps` yourself: every target installs whatever is missing
+or outdated first, and is a no-op when nothing changed. There's no virtualenv to
+activate. For ad-hoc commands, prefix them with `uv run`, e.g. `uv run ansible-vault view …`.
+
+The Python toolchain is defined in `pyproject.toml`. `uv.lock` pins every package,
+including transitive dependencies, with hashes. Ansible collections are pinned in
+`requirements.yml` and installed into the git-ignored `./collections`, so they're
+isolated from `~/.ansible`. To update:
+
+```shell
+uv lock --upgrade                 # or: uv lock --upgrade-package ansible-lint
+make lint                         # re-syncs automatically because uv.lock changed
+```
+
+Dependabot proposes these updates monthly.
 
 ### 2. Create the secrets
 
 ```shell
 cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
 $EDITOR inventory/group_vars/all/vault.yml        # set the dashboard password (≥ 12 chars)
-ansible-vault encrypt inventory/group_vars/all/vault.yml
+uv run ansible-vault encrypt inventory/group_vars/all/vault.yml
 ```
 
 Commit the encrypted `vault.yml`. To avoid typing the vault password each time, put it in
@@ -220,7 +235,7 @@ Or run it step by step:
 make firmware        # may reboot nodes, one at a time
 make base
 make network         # re-applies netplan; the node keeps its IP
-make ceph-prereqs ARGS="-e wipe_osd_disks=true"   # wipes the Kingston SSDs (first install only)
+make ceph-prereqs ANSIBLE_ARGS="-e wipe_osd_disks=true"   # wipes the Kingston SSDs (first install only)
 make ceph
 ```
 
@@ -240,7 +255,7 @@ monitoring), waits until all 3 OSDs are up, then creates the `rbd` pool and the 
 file system.
 
 The bootstrap output is hidden because it contains the dashboard password. If bootstrap
-fails, rerun with `make ceph ARGS="-e ceph_debug=true"` to see it. If a failed bootstrap
+fails, rerun with `make ceph ANSIBLE_ARGS="-e ceph_debug=true"` to see it. If a failed bootstrap
 leaves a half-built cluster behind, the playbook stops and prints the cleanup commands.
 
 ### 10. Verify
@@ -293,7 +308,8 @@ or `ceph_filesystems` in the inventory.
 | Reboot after kernel updates | `make reboot`: requires a healthy cluster, sets `noout`, reboots one node at a time, waits for recovery, always unsets `noout` |
 | Replace a failed OSD        | `ceph orch osd rm <id> --replace --zap`, swap disk; the OSD spec redeploys it                        |
 | Check memory headroom       | `ceph orch ps` (column `MEM USE`) and `free -h` on each node, after a few days of real load           |
-| Lint                        | `make lint` (also runs in GitHub Actions)                                                            |
+| Dry run of all changes      | `make check` (`--check --diff`, changes nothing)                                                            |
+| Lint                        | `make lint` (yamllint, ansible-lint, shellcheck; CI runs the same `make deps lint`) |
 
 Unattended-upgrades installs security updates but never reboots a node on its own.
 Upgrades run at staggered times (ceph1 03:00, ceph2 04:00, ceph3 05:00), and

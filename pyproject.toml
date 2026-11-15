@@ -1,0 +1,23 @@
+[project]
+name = "raspberry-pi-ceph-cluster"
+version = "0.1.0"
+description = "Ceph on three Raspberry Pi 5, set up as code with Ansible and cephadm"
+readme = "README.md"
+# ansible-core 2.20 supports controller Python 3.12-3.14.
+requires-python = ">=3.12,<3.15"
+# Exact versions of everything (including transitive dependencies) are pinned in uv.lock.
+dependencies = [
+    "ansible-core>=2.20,<2.21",
+]
+
+[dependency-groups]
+dev = [
+    "ansible-lint>=26.11",
+    "pre-commit>=4",
+    "shellcheck-py>=0.10",
+    "yamllint>=1.38",
+]
+
+[tool.uv]
+# Not a Python package: uv only manages the environment.
+package = false

@@ -1,0 +1,17 @@
+---
+# Picks the node that runs cluster-wide Ceph commands: the ceph_bootstrap node if
+# it's reachable, otherwise the first reachable node (all nodes are _admin nodes).
+# The result is the in-memory group `ceph_admin`.
+- name: Select the Ceph admin node
+  hosts: ceph
+  gather_facts: false
+  tasks:
+    - name: Check reachability
+      ansible.builtin.ping:
+
+    - name: Add the selected node to group ceph_admin
+      ansible.builtin.add_host:
+        name: "{{ ansible_play_hosts | intersect(groups['ceph_bootstrap']) | first | default(ansible_play_hosts | first) }}"
+        groups: ceph_admin
+      run_once: true
+      changed_when: false

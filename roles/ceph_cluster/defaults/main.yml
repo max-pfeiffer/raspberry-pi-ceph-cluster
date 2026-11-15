@@ -2,7 +2,7 @@
 ceph_specs_dir: /etc/ceph/specs
 
 # Show output of tasks that handle secrets (bootstrap). Only for troubleshooting:
-# `make ceph ARGS="-e ceph_debug=true"`.
+# `make ceph ANSIBLE_ARGS="-e ceph_debug=true"`.
 ceph_debug: false
 
 ceph_mgr_count: 2

@@ -1,0 +1,12 @@
+---
+# Reboots ceph_maintenance_node and waits for the cluster to recover.
+- name: Reboot {{ ceph_maintenance_node }}
+  ansible.builtin.reboot:
+    reboot_timeout: 900
+  delegate_to: "{{ ceph_maintenance_node }}"
+
+- name: Wait for the cluster to recover from rebooting {{ ceph_maintenance_node }}
+  ansible.builtin.include_tasks: wait_healthy.yml
+  vars:
+    ceph_maintenance_peer: "{{ groups['ceph'] | difference([ceph_maintenance_node]) | first }}"
+    ceph_maintenance_allowed_checks: "{{ ceph_health_allowed_checks + ['OSDMAP_FLAGS'] }}"

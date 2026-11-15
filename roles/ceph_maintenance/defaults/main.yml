@@ -1,0 +1,8 @@
+---
+# Node that runs the health checks. Defaults to another node than the one being
+# changed, so checks keep working while that node reboots.
+ceph_maintenance_peer: "{{ groups['ceph'] | difference([inventory_hostname]) | first }}"
+# Health checks that don't count as unhealthy (see also inventory group_vars).
+ceph_maintenance_allowed_checks: "{{ ceph_health_allowed_checks }}"
+ceph_maintenance_retries: 90
+ceph_maintenance_delay: 20
