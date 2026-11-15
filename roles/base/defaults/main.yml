@@ -13,6 +13,8 @@ base_packages:
 # Security updates are installed automatically, but nodes never reboot on their
 # own. Reboot with `make reboot`, which keeps the cluster healthy.
 base_unattended_reboot: false
+# One hour apart per node (ceph1 03:00, ceph2 04:00, ...), in the node's timezone.
+base_upgrade_time: "{{ '%02d:00' | format(3 + groups['ceph'].index(inventory_hostname)) }}"
 
 firewall_enabled: true
 # Networks allowed to reach Ceph and monitoring services.

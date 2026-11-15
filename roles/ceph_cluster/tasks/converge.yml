@@ -29,11 +29,10 @@
     mode: "0600"
   loop: [cluster.yml, cephfs.yml]
 
-# Specs are declarative: applying an unchanged spec is a no-op for the orchestrator.
 - name: Apply cluster spec (hosts, mon, mgr, osd, monitoring)
-  ansible.builtin.command: "{{ cephadm_path }} shell --mount {{ ceph_specs_dir }}:/specs -- ceph orch apply -i /specs/cluster.yml"
-  register: _apply_cluster
-  changed_when: false
+  ansible.builtin.include_tasks: apply_spec.yml
+  vars:
+    ceph_spec: cluster.yml
 
 - name: Wait for all OSDs to be up
   ansible.builtin.command: "{{ ceph_shell }} ceph osd stat --format json"
@@ -68,8 +67,9 @@
 
 # Applied after `fs volume create`, which would otherwise reset MDS placement.
 - name: Apply CephFS MDS spec
-  ansible.builtin.command: "{{ cephadm_path }} shell --mount {{ ceph_specs_dir }}:/specs -- ceph orch apply -i /specs/cephfs.yml"
-  changed_when: false
+  ansible.builtin.include_tasks: apply_spec.yml
+  vars:
+    ceph_spec: cephfs.yml
 
 - name: Show cluster status
   ansible.builtin.command: "{{ ceph_shell }} ceph -s"

@@ -12,17 +12,15 @@ timezone: Etc/UTC
 ntp_pools:
   - pool.ntp.org
 
-# --- Public network (onboard 1 GbE, eth0) -----------------------------------
-# Ceph public network: clients, MONs, management, SSH.
-public_interface: eth0
+# --- Network (UGREEN 2.5 GbE USB adapter) -----------------------------------
+# The only network: Ceph public network (clients, MONs, OSD replication) plus SSH
+# and management. There is no separate Ceph cluster network; the onboard eth0
+# stays unconfigured.
+# Ubuntu names USB NICs enx<mac>; each node has exactly one, so it is matched by
+# name pattern and no per-host MAC is needed.
+public_interface_match: "enx*"
 public_network: 192.168.30.0/24
 public_gateway: 192.168.30.1
+public_mtu: 1500
 dns_servers:
   - 192.168.30.1
-
-# --- Cluster network (UGREEN 2.5 GbE USB adapter) ---------------------------
-# Ceph cluster network: OSD replication and heartbeat traffic only.
-# The adapter is matched by MAC (cluster_nic_mac in host_vars) and renamed.
-cluster_interface: cluster0
-cluster_network: 10.10.30.0/24
-cluster_mtu: 1500

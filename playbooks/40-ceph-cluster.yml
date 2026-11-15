@@ -1,9 +1,12 @@
 ---
-- name: Bootstrap Ceph
-  hosts: ceph_bootstrap
+- name: Select admin node
+  ansible.builtin.import_playbook: select-admin.yml
+
+- name: Bootstrap Ceph (only if no cluster exists yet)
+  hosts: ceph_admin
   become: true
   tasks:
-    - name: Bootstrap first node
+    - name: Bootstrap
       ansible.builtin.include_role:
         name: ceph_cluster
         tasks_from: bootstrap
@@ -18,7 +21,7 @@
         tasks_from: authorize
 
 - name: Converge Ceph services, configuration, pools and file systems
-  hosts: ceph_bootstrap
+  hosts: ceph_admin
   become: true
   tasks:
     - name: Converge cluster

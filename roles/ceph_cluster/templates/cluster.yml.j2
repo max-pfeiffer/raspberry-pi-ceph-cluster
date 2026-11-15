@@ -41,6 +41,8 @@ service_type: prometheus
 placement:
   label: monitoring
   count: 1
+spec:
+  retention_time: "{{ ceph_prometheus_retention_time }}"
 ---
 service_type: grafana
 placement:

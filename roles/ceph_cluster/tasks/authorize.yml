@@ -2,5 +2,5 @@
 - name: Authorize cephadm SSH key for root
   ansible.posix.authorized_key:
     user: root
-    key: "{{ hostvars[groups['ceph_bootstrap'][0]]._ceph_pub.content | b64decode }}"
+    key: "{{ hostvars[groups['ceph_admin'][0]]._ceph_pub.stdout }}"
     state: present

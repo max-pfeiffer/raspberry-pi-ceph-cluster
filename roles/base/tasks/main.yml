@@ -42,12 +42,49 @@
     dest: /etc/apt/apt.conf.d/52unattended-upgrades-local
     mode: "0644"
 
+# needrestart would otherwise restart Ceph daemons after library upgrades, on all
+# nodes around the same time.
+- name: Create needrestart config directory
+  ansible.builtin.file:
+    path: /etc/needrestart/conf.d
+    state: directory
+    mode: "0755"
+
+- name: Never restart Ceph daemons automatically
+  ansible.builtin.copy:
+    dest: /etc/needrestart/conf.d/50-ceph.conf
+    content: |
+      # {{ ansible_managed }}
+      # Ceph daemons are restarted by `make reboot` or the orchestrator only.
+      $nrconf{override_rc}{qr(^ceph-)} = 0;
+    mode: "0644"
+
+- name: Create apt-daily-upgrade timer drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/apt-daily-upgrade.timer.d
+    state: directory
+    mode: "0755"
+
+- name: Stagger unattended upgrades so nodes never upgrade at the same time
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/apt-daily-upgrade.timer.d/50-stagger.conf
+    content: |
+      # {{ ansible_managed }}
+      [Timer]
+      OnCalendar=
+      OnCalendar=*-*-* {{ base_upgrade_time }}
+      RandomizedDelaySec=0
+    mode: "0644"
+  notify: Reload systemd
+
 - name: Configure firewall
   when: firewall_enabled
   block:
+    # Plain allow, not `limit`: cephadm opens many SSH connections between nodes
+    # and would be locked out by rate limiting. Password logins are disabled.
     - name: Allow SSH
       community.general.ufw:
-        rule: limit
+        rule: allow
         port: "22"
         proto: tcp
 
@@ -58,11 +95,6 @@
         port: "{{ item.1 }}"
         proto: tcp
       loop: "{{ firewall_allowed_networks | product(firewall_ceph_ports) | list }}"
-
-    - name: Allow all traffic on the cluster network
-      community.general.ufw:
-        rule: allow
-        src: "{{ cluster_network }}"
 
     - name: Enable firewall with default deny
       community.general.ufw:

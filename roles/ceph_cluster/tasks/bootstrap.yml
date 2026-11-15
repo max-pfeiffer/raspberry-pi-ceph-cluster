@@ -3,7 +3,33 @@
   ansible.builtin.assert:
     that: ceph_dashboard_password is defined and ceph_dashboard_password | length >= 12
     fail_msg: "Set vault_ceph_dashboard_password in inventory/group_vars/all/vault.yml (see README)."
-  no_log: true
+    quiet: true
+
+- name: List Ceph daemons on this node
+  ansible.builtin.command: "{{ cephadm_path }} ls --no-detail"
+  register: _daemons
+  changed_when: false
+
+- name: Check for an existing ceph.conf
+  ansible.builtin.stat:
+    path: /etc/ceph/ceph.conf
+  register: _ceph_conf
+
+- name: Determine cluster state
+  ansible.builtin.set_fact:
+    _cluster_fsids: "{{ _daemons.stdout | from_json | map(attribute='fsid') | unique | list }}"
+
+# All nodes run daemons once the cluster exists, so ceph.conf without any daemon
+# means an earlier bootstrap failed halfway.
+- name: Refuse to continue on a half-bootstrapped or ambiguous node
+  ansible.builtin.assert:
+    that:
+      - _cluster_fsids | length <= 1
+      - _cluster_fsids | length == 1 or not _ceph_conf.stat.exists
+    fail_msg: >-
+      Found ceph.conf but daemons of fsids {{ _cluster_fsids }} on {{ inventory_hostname }}.
+      A previous bootstrap probably failed. Inspect it, then clean up with
+      `cephadm rm-cluster --fsid <fsid> --force` and `rm /etc/ceph/ceph.conf` and rerun.
 
 - name: Bootstrap cluster
   ansible.builtin.command:
@@ -14,18 +40,17 @@
       - bootstrap
       - --mon-ip
       - "{{ ansible_host }}"
-      - --cluster-network
-      - "{{ cluster_network }}"
       - --skip-monitoring-stack
       - --initial-dashboard-user
       - "{{ ceph_dashboard_user }}"
       - --initial-dashboard-password
       - "{{ ceph_dashboard_password }}"
       - --dashboard-password-noupdate
-    creates: /etc/ceph/ceph.conf
-  no_log: true
+  when: _cluster_fsids | length == 0
+  changed_when: true
+  no_log: "{{ not (ceph_debug | bool) }}"
 
 - name: Read cephadm SSH public key
-  ansible.builtin.slurp:
-    src: /etc/ceph/ceph.pub
+  ansible.builtin.command: "{{ ceph_shell }} ceph cephadm get-pub-key"
   register: _ceph_pub
+  changed_when: false

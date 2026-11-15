@@ -1,7 +1,20 @@
 ---
+# One node at a time: the cluster must be healthy before a node is touched, and
+# must have recovered from its reboot before the next node is touched.
 - name: Raspberry Pi firmware and boot configuration
   hosts: ceph
   become: true
-  serial: 1  # reboots happen one node at a time
+  serial: 1
+  pre_tasks:
+    - name: Wait for a healthy cluster before changing this node
+      ansible.builtin.include_role:
+        name: ceph_maintenance
+        tasks_from: wait_healthy
   roles:
     - rpi_firmware
+  post_tasks:
+    # Handlers (the reboot) have run by now.
+    - name: Wait for the cluster to recover
+      ansible.builtin.include_role:
+        name: ceph_maintenance
+        tasks_from: wait_healthy

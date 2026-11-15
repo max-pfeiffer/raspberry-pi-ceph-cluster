@@ -2,8 +2,11 @@
 # First-boot network only. Ansible (role "network") takes over netplan afterwards.
 version: 2
 ethernets:
-  {{ public_interface }}:
+  lan:
+    match:
+      name: "{{ public_interface_match }}"
     dhcp4: false
+    mtu: {{ public_mtu }}
     addresses:
       - {{ ansible_host }}/{{ public_network.split('/')[1] }}
     routes:

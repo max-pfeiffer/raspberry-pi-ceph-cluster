@@ -1,40 +1,37 @@
 ---
-# Reboots nodes one at a time (e.g. after kernel updates) and waits until the
-# cluster has recovered before moving on.
-- name: Prepare cluster for maintenance
-  hosts: ceph_bootstrap
+# Reboots nodes one at a time (e.g. after kernel updates). Requires a healthy
+# cluster to start, waits for recovery after each node, and always clears noout.
+- name: Select admin node
+  ansible.builtin.import_playbook: select-admin.yml
+
+- name: Rolling reboot
+  hosts: ceph_admin
   become: true
   tasks:
-    - name: Set noout
-      ansible.builtin.command: /usr/local/sbin/cephadm shell -- ceph osd set noout
-      changed_when: true
+    - name: Require a healthy cluster before starting
+      ansible.builtin.include_role:
+        name: ceph_maintenance
+        tasks_from: wait_healthy
+      vars:
+        ceph_maintenance_peer: "{{ inventory_hostname }}"
+        # Tolerate a noout flag left behind by an interrupted earlier run.
+        ceph_maintenance_allowed_checks: "{{ ceph_health_allowed_checks + ['OSDMAP_FLAGS'] }}"
+        ceph_maintenance_retries: 1
 
-- name: Reboot nodes one by one
-  hosts: ceph
-  become: true
-  serial: 1
-  vars:
-    _admin_peer: "{{ groups['ceph'] | difference([inventory_hostname]) | first }}"
-  tasks:
-    - name: Reboot
-      ansible.builtin.reboot:
-        reboot_timeout: 900
+    - name: Reboot nodes with noout set
+      block:
+        - name: Set noout
+          ansible.builtin.command: "{{ ceph_shell }} ceph osd set noout"
+          changed_when: true
 
-    - name: Wait until the only remaining health warning is the noout flag
-      ansible.builtin.command: /usr/local/sbin/cephadm shell -- ceph health --format json
-      delegate_to: "{{ _admin_peer }}"
-      register: _health
-      until: >-
-        (_health.stdout | from_json).checks | default({}) | list
-        | difference(['OSDMAP_FLAGS']) | length == 0
-      retries: 90
-      delay: 20
-      changed_when: false
-
-- name: Finish maintenance
-  hosts: ceph_bootstrap
-  become: true
-  tasks:
-    - name: Unset noout
-      ansible.builtin.command: /usr/local/sbin/cephadm shell -- ceph osd unset noout
-      changed_when: true
+        - name: Reboot each node
+          ansible.builtin.include_role:
+            name: ceph_maintenance
+            tasks_from: reboot_node
+          loop: "{{ groups['ceph'] }}"
+          loop_control:
+            loop_var: ceph_maintenance_node
+      always:
+        - name: Unset noout
+          ansible.builtin.command: "{{ ceph_shell }} ceph osd unset noout"
+          changed_when: true

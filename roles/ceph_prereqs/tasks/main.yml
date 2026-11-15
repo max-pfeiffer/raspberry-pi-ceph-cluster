@@ -11,7 +11,7 @@
     url: "{{ cephadm_url }}"
     dest: "{{ cephadm_path }}"
     mode: "0755"
-    force: true
+    checksum: "sha256:{{ cephadm_sha256 }}"
 
 - name: Pre-pull Ceph container image
   ansible.builtin.command: podman pull {{ ceph_image }}

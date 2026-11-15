@@ -1,8 +1,16 @@
 ---
 # --- Ceph release -----------------------------------------------------------
-# Pin an exact release. Changing it and running `make upgrade` upgrades the cluster.
+# Pin an exact release. To upgrade, print the values for a new release with
+# `scripts/ceph-release-pins.sh <version>`, update all three, then run `make upgrade`.
 ceph_version: "20.2.0"
-ceph_image: "quay.io/ceph/ceph:v{{ ceph_version }}"
+cephadm_sha256: "ed5a13ad26f7f55dd30e9b63855e4e581fd86973bec1d21a12ed0bb26af19c8b"
+# Multi-arch image index digest of quay.io/ceph/ceph:v{{ ceph_version }}.
+ceph_image_digest: "sha256:1228c3d05e45fbc068a8c33614e4409b6dac688bcc77369b06009b5830fa8d86"
+ceph_image: "quay.io/ceph/ceph@{{ ceph_image_digest }}"
+
+# --- Tooling ----------------------------------------------------------------
+cephadm_path: /usr/local/sbin/cephadm
+ceph_shell: "{{ cephadm_path }} shell --"
 
 # --- Dashboard --------------------------------------------------------------
 ceph_dashboard_user: admin
@@ -14,6 +22,12 @@ ceph_dashboard_password: "{{ vault_ceph_dashboard_password }}"
 ceph_osd_device_model: "KINGSTON SNV3S1000G"
 
 # --- Placement labels -------------------------------------------------------
-# All nodes are admin nodes (hold ceph.conf + admin keyring) and run every daemon.
-ceph_host_labels: [_admin, mon, mgr, osd, mds]
+# All nodes are admin nodes (hold ceph.conf + admin keyring) and run MON, MGR and
+# OSD. Memory-heavy extras are split: monitoring on ceph1, MDS on ceph2 + ceph3.
+ceph_host_labels: [_admin, mon, mgr, osd]
 ceph_host_extra_labels: []
+
+# --- Maintenance ------------------------------------------------------------
+# Health checks tolerated when waiting for a healthy cluster before/after a
+# disruptive change (firmware, network, reboots), e.g. [POOL_NO_REDUNDANCY].
+ceph_health_allowed_checks: []

@@ -1,14 +1,18 @@
 ---
-cephadm_path: /usr/local/sbin/cephadm
-ceph_shell: "{{ cephadm_path }} shell --"
 ceph_specs_dir: /etc/ceph/specs
+
+# Show output of tasks that handle secrets (bootstrap). Only for troubleshooting:
+# `make ceph ARGS="-e ceph_debug=true"`.
+ceph_debug: false
 
 ceph_mgr_count: 2
 ceph_mds_count: 2
 ceph_monitoring_enabled: true
+# Prometheus memory grows with retained samples; keep history short on 8 GB nodes.
+ceph_prometheus_retention_time: 7d
 
-# Memory budget for an 8 GB node running OSD + MON + MGR + MDS
-# (+ monitoring stack on ceph1).
+# Memory budget per 8 GB node: OSD + MON + MGR on every node, plus the monitoring
+# stack on ceph1 and the MDS daemons on ceph2/ceph3 (see placement labels).
 ceph_config:
   - { who: osd, option: osd_memory_target_autotune, value: "false" }
   - { who: osd, option: osd_memory_target, value: "2684354560" }      # 2.5 GiB

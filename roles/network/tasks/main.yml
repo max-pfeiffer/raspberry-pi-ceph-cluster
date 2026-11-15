@@ -1,10 +1,11 @@
 ---
-- name: Ensure cluster NIC MAC is set
+# netplan would assign the same IP to every interface matching the pattern.
+- name: Ensure exactly one interface matches {{ public_interface_match }}
   ansible.builtin.assert:
-    that:
-      - cluster_nic_mac is defined
-      - cluster_nic_mac != "00:00:00:00:00:00"
-    fail_msg: "Set cluster_nic_mac in inventory/host_vars/{{ inventory_hostname }}.yml (see README)."
+    that: _matching | length == 1
+    fail_msg: "Expected one interface matching '{{ public_interface_match }}', found {{ _matching }}."
+  vars:
+    _matching: "{{ ansible_facts.interfaces | select('match', '^' ~ (public_interface_match | replace('*', '.*')) ~ '$') | list }}"
 
 - name: Disable USB autosuspend for the 2.5 GbE adapter
   ansible.builtin.template:

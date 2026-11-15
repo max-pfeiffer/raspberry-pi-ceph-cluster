@@ -2,6 +2,6 @@
 network_netplan_file: /etc/netplan/10-ceph.yaml
 
 # USB IDs of the 2.5 GbE adapter (UGREEN uses Realtek RTL8156B). USB autosuspend
-# is disabled for these to prevent link flaps on the cluster network.
+# is disabled for these to prevent link flaps.
 network_usb_nic_ids:
   - { vendor: "0bda", product: "8156" }

@@ -3,8 +3,11 @@ network:
   version: 2
   renderer: networkd
   ethernets:
-    {{ public_interface }}:
+    lan:
+      match:
+        name: "{{ public_interface_match }}"
       dhcp4: false
+      mtu: {{ public_mtu }}
       addresses:
         - {{ ansible_host }}/{{ public_network.split('/')[1] }}
       routes:
@@ -13,11 +16,3 @@ network:
       nameservers:
         addresses: [{{ dns_servers | join(', ') }}]
         search: [{{ domain }}]
-    {{ cluster_interface }}:
-      match:
-        macaddress: "{{ cluster_nic_mac | lower }}"
-      set-name: {{ cluster_interface }}
-      dhcp4: false
-      mtu: {{ cluster_mtu }}
-      addresses:
-        - {{ cluster_ip }}/{{ cluster_network.split('/')[1] }}

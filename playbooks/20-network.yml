@@ -1,6 +1,23 @@
 ---
-- name: Public and cluster network
+# One node at a time, gated on cluster health: a broken netplan change takes
+# down one node, not the whole cluster (the play stops after the first failure).
+- name: Network
   hosts: ceph
   become: true
+  serial: 1
+  pre_tasks:
+    - name: Wait for a healthy cluster before changing this node
+      ansible.builtin.include_role:
+        name: ceph_maintenance
+        tasks_from: wait_healthy
   roles:
     - network
+  post_tasks:
+    - name: Wait for the node to be reachable again
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+
+    - name: Wait for the cluster to recover
+      ansible.builtin.include_role:
+        name: ceph_maintenance
+        tasks_from: wait_healthy

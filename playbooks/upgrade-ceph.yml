@@ -1,5 +1,8 @@
 ---
 # Upgrades the running cluster to ceph_version / ceph_image from the inventory.
+- name: Select admin node
+  ansible.builtin.import_playbook: select-admin.yml
+
 - name: Install matching cephadm on all nodes
   hosts: ceph
   become: true
@@ -7,10 +10,8 @@
     - ceph_prereqs
 
 - name: Upgrade Ceph via the orchestrator
-  hosts: ceph_bootstrap
+  hosts: ceph_admin
   become: true
-  vars:
-    ceph_shell: /usr/local/sbin/cephadm shell --
   tasks:
     - name: Read running versions
       ansible.builtin.command: "{{ ceph_shell }} ceph versions --format json"

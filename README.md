@@ -14,14 +14,14 @@ Three Raspberry Pi 5 with:
 * [UGREEN 2.5G USB LAN Adapter Ethernet Adapter USB to RJ45 Network Adapter](https://www.amazon.de/dp/B0CWV2Q6HJ)
 
 Also needed: the official 27 W USB-C power supply and the Active Cooler for each Pi,
-plus a switch (or VLAN) with 2.5 GbE ports for the cluster network.
+plus a switch with 2.5 GbE ports.
 
-| Component            | Role                                                     |
-|----------------------|----------------------------------------------------------|
-| Transcend 110S       | Boot / OS disk (Ubuntu Server LTS)                       |
-| Kingston NV3 1 TB    | Ceph OSD (BlueStore, data + DB + WAL on the same disk)   |
-| Onboard 1 GbE `eth0` | Ceph **public** network: clients, MON, management, SSH   |
-| UGREEN 2.5 GbE USB   | Ceph **cluster** network: OSD replication and heartbeats |
+| Component            | Role                                                           |
+|----------------------|----------------------------------------------------------------|
+| Transcend 110S       | Boot / OS disk (Ubuntu Server LTS)                             |
+| Kingston NV3 1 TB    | Ceph OSD (BlueStore, data + DB + WAL on the same disk)         |
+| UGREEN 2.5 GbE USB   | The only network: Ceph clients, MON, replication, SSH, updates |
+| Onboard 1 GbE `eth0` | Not used (left unconfigured)                                   |
 
 ## Ceph nodes
 IP and hostnames for nodes:
@@ -32,8 +32,8 @@ IP and hostnames for nodes:
 Gateway: 192.168.30.1
 DNS: 192.168.30.1
 
-Cluster network (2.5 GbE): `10.10.30.0/24`, with nodes at `.10`, `.11` and `.12`.
-To use a different subnet, change `cluster_network` and `cluster_ip` in the inventory.
+All addresses are on the 2.5 GbE adapter. Ceph uses one network for everything; there's
+no separate cluster (replication) network.
 
 ## Cluster design
 
@@ -41,35 +41,41 @@ To use a different subnet, change `cluster_network` and `cluster_ip` in the inve
 * 3 OSDs, one per node, CRUSH failure domain `host`
 * Replicated pools with `size=3`, `min_size=2`. There are too few hosts for erasure coding.
 * Capacity: about 3 TB raw, about 1 TB usable; plan for about 800 GB because of the 85 % nearfull limit
-* CephFS `cephfs` with 2 MDS (active + standby) and an RBD pool `rbd`
-* Monitoring stack (Prometheus, Grafana, Alertmanager) only on `ceph1`, node-exporter everywhere
+* CephFS `cephfs` with 2 MDS (active + standby) on `ceph2` and `ceph3`, and an RBD pool `rbd`
+* Monitoring stack (Prometheus with 7 days retention, Grafana, Alertmanager) only on
+  `ceph1`, node-exporter everywhere
 * Memory budget per 8 GB node: OSD 2.5 GiB, MON 1 GiB, MDS cache 1 GiB (see
-  `ceph_config` in `roles/ceph_cluster/defaults/main.yml`)
-* All three nodes have the `_admin` label, so `ceph` commands work on any node
+  `ceph_config` in `roles/ceph_cluster/defaults/main.yml`). MDS and monitoring are on
+  different nodes so no node runs every memory-hungry daemon at once.
+* All three nodes have the `_admin` label, so `ceph` commands work on any node. If `ceph1`
+  is down, playbooks automatically use another node for cluster-wide commands.
 
 ## Repository layout
 
 ```
 ansible.cfg, Makefile           Entry points (`make help`)
 inventory/
-  hosts.yml                     Nodes, IPs, bootstrap node
+  hosts.yml                     Nodes, IPs, preferred admin/bootstrap node
   group_vars/all/main.yml       Networks, admin user, NTP, timezone
   group_vars/all/vault.yml      Secrets, encrypted with ansible-vault (you create it)
-  group_vars/ceph/main.yml      Ceph version, OSD disk model, placement labels
-  host_vars/cephN.yml           Per node: MAC of the 2.5 GbE adapter
+  group_vars/ceph/main.yml      Ceph version + checksums, OSD disk model, placement labels
+  host_vars/cephN.yml           Per node labels (ceph1: monitoring, ceph2/3: mds)
 playbooks/
   render-cloud-init.yml         Renders first-boot files into build/cloud-init/<host>/
   site.yml                      Runs 00 → 40 in order
-  00-firmware.yml               EEPROM boot order, PCIe in config.txt
+  select-admin.yml              Picks the node for cluster-wide commands (ceph1, else first reachable)
+  00-firmware.yml               EEPROM boot order, PCIe in config.txt (one node at a time, health-gated)
   10-base.yml                   Hostname, /etc/hosts, chrony, packages, firewall, unattended-upgrades
-  20-network.yml                Netplan for both networks, USB autosuspend off
+  20-network.yml                Netplan for the 2.5 GbE adapter (one node at a time, health-gated)
   30-ceph-prereqs.yml           Podman, pinned cephadm, image pre-pull, optional OSD disk wipe
   40-ceph-cluster.yml           Bootstrap, add hosts, config, services, pools, CephFS
   upgrade-ceph.yml              Rolling Ceph upgrade to `ceph_version`
   rolling-reboot.yml            Reboot nodes one by one, waiting for health
-roles/                          rpi_firmware, base, network, ceph_prereqs, ceph_cluster
+roles/                          rpi_firmware, base, network, ceph_prereqs, ceph_cluster,
+                                ceph_maintenance (health gating, rolling reboots)
 roles/ceph_cluster/templates/   cephadm service specs (cluster.yml, cephfs.yml)
 scripts/flash-os-disk.sh        Writes Ubuntu + cloud-init onto the OS disk
+scripts/ceph-release-pins.sh    Prints the version pins for a Ceph release
 ```
 
 Principles:
@@ -79,7 +85,12 @@ Principles:
 * **Idempotent.** Running `make site` again changes nothing on a converged cluster.
 * **Declarative Ceph.** Daemons and OSDs are described in cephadm service specs and
   the orchestrator converges to them.
-* **Pinned versions.** The Ceph release lives in `inventory/group_vars/ceph/main.yml`.
+* **Pinned versions.** The Ceph release is pinned in `inventory/group_vars/ceph/main.yml`,
+  with the cephadm checksum and the container image digest. Ansible, the linters,
+  collections and CI actions are pinned to exact versions; Dependabot proposes updates.
+* **Safe to rerun on a live cluster.** Playbooks that can disrupt a node (firmware,
+  network, reboots) change one node at a time. They first wait for a healthy cluster,
+  and wait again for recovery before moving to the next node.
 * **Secrets encrypted.** They're kept in `vault.yml` with ansible-vault. Rendered
   cloud-init files are written to `build/`, which is git-ignored.
 
@@ -110,15 +121,15 @@ Commit the encrypted `vault.yml`. To avoid typing the vault password each time, 
 
 ### 3. Review the inventory
 
-Check `inventory/hosts.yml` and `inventory/group_vars/`, in particular `cluster_network`,
+Check `inventory/hosts.yml` and `inventory/group_vars/`, in particular `public_network`,
 `ceph_version` and `ceph_osd_device_model`.
 
 ### 4. Assemble the hardware
 
 1. Mount the HAT and both SSDs, attach the Active Cooler, plug the 2.5 GbE adapter into a
    **blue USB 3** port.
-2. Connect `eth0` to the 192.168.30.0/24 network and the 2.5 GbE adapter to the cluster
-   network switch/VLAN.
+2. Connect the 2.5 GbE adapter to the 2.5 GbE switch on the 192.168.30.0/24 network.
+   The onboard `eth0` port stays unused once Ubuntu is installed.
 
 ### 5. Configure the bootloader (one time per Pi)
 
@@ -156,7 +167,7 @@ make cloud-init           # → build/cloud-init/ceph1/, ceph2/, ceph3/
 ```
 
 Each directory contains `user-data` (hostname, admin user `ansible`, your SSH key),
-`network-config` (static IP on `eth0`) and `meta-data`.
+`network-config` (static IP on the 2.5 GbE adapter) and `meta-data`.
 
 ### 7. Flash Ubuntu onto the Transcend SSD
 
@@ -195,18 +206,7 @@ ssh-keyscan 192.168.30.1{0,1,2} >> ~/.ssh/known_hosts
 make ping
 ```
 
-### 9. Find the cluster NIC MAC
-
-The 2.5 GbE adapter is matched by MAC address and renamed to `cluster0`. Read the MACs:
-
-```shell
-ansible ceph -a "ip -br link" --ask-vault-pass
-```
-
-The adapter appears as `enx<mac>`. Enter each MAC in `inventory/host_vars/cephN.yml`
-(`cluster_nic_mac`).
-
-### 10. Run the setup
+### 9. Run the setup
 
 Run everything at once:
 
@@ -219,22 +219,31 @@ Or run it step by step:
 ```shell
 make firmware        # may reboot nodes, one at a time
 make base
-make network         # re-applies netplan; eth0 keeps its IP
+make network         # re-applies netplan; the node keeps its IP
 make ceph-prereqs ARGS="-e wipe_osd_disks=true"   # wipes the Kingston SSDs (first install only)
 make ceph
 ```
+
+`make firmware` and `make network` wait for `HEALTH_OK` before and after each node once
+the cluster exists. If the cluster has a known, harmless warning, add its check name to
+`ceph_health_allowed_checks` in `inventory/group_vars/ceph/main.yml`, or the run stops
+after about 30 minutes of waiting.
 
 Use `wipe_osd_disks=true` only if the Kingston disks have old partitions. Without it,
 cephadm ignores disks that aren't empty. The wipe only selects disks whose model matches
 `ceph_osd_device_model`, never touches the root disk, and is refused once the cluster
 exists.
 
-`make ceph` bootstraps the cluster on `ceph1`, authorizes the cephadm SSH key on all
+`make ceph` bootstraps the cluster on `ceph1` (only if no cluster exists yet), authorizes the cephadm SSH key on all
 nodes, applies the configuration, applies the service specs (hosts, MON, MGR, OSD,
 monitoring), waits until all 3 OSDs are up, then creates the `rbd` pool and the `cephfs`
 file system.
 
-### 11. Verify
+The bootstrap output is hidden because it contains the dashboard password. If bootstrap
+fails, rerun with `make ceph ARGS="-e ceph_debug=true"` to see it. If a failed bootstrap
+leaves a half-built cluster behind, the playbook stops and prints the cleanup commands.
+
+### 10. Verify
 
 ```shell
 ssh ansible@ceph1
@@ -276,16 +285,20 @@ or `ceph_filesystems` in the inventory.
 
 ## Day-2 operations
 
-| Task                               | How                                                                                     |
-|------------------------------------|-----------------------------------------------------------------------------------------|
-| Change configuration               | Edit the inventory / role defaults, run `make site`                                     |
-| Upgrade Ceph                       | Bump `ceph_version`, run `make upgrade` (requires `HEALTH_OK`, upgrades daemon by daemon) |
-| Reboot after kernel updates        | `make reboot`: sets `noout`, reboots one node at a time, waits for recovery             |
-| Replace a failed OSD               | `ceph orch osd rm <id> --replace --zap`, swap disk; the OSD spec redeploys it           |
-| Lint                               | `make lint` (also runs in GitHub Actions)                                               |
+| Task                        | How                                                                                                  |
+|-----------------------------|------------------------------------------------------------------------------------------------------|
+| Change configuration        | Edit the inventory / role defaults, run `make site`                                                  |
+| Preview a spec change       | `sudo cephadm shell --mount /etc/ceph/specs:/specs -- ceph orch apply -i /specs/cluster.yml --dry-run` |
+| Upgrade Ceph                | `scripts/ceph-release-pins.sh <version>`, copy the three values into `group_vars/ceph/main.yml`, `make upgrade` |
+| Reboot after kernel updates | `make reboot`: requires a healthy cluster, sets `noout`, reboots one node at a time, waits for recovery, always unsets `noout` |
+| Replace a failed OSD        | `ceph orch osd rm <id> --replace --zap`, swap disk; the OSD spec redeploys it                        |
+| Check memory headroom       | `ceph orch ps` (column `MEM USE`) and `free -h` on each node, after a few days of real load           |
+| Lint                        | `make lint` (also runs in GitHub Actions)                                                            |
 
 Unattended-upgrades installs security updates but never reboots a node on its own.
-Use `make reboot` so that only one node is down at a time.
+Upgrades run at staggered times (ceph1 03:00, ceph2 04:00, ceph3 05:00), and
+needrestart is configured never to restart Ceph daemons. Use `make reboot` to pick up
+kernel and library updates with only one node down at a time.
 
 ## Notes and pitfalls
 
@@ -293,8 +306,12 @@ Use `make reboot` so that only one node is down at a time.
   switch (~450 MB/s total). Forcing Gen3 brings no benefit with this HAT.
 * **Kingston NV3** is a DRAM-less consumer SSD without power-loss protection. It's fine
   for a homelab, but sync-write latency (e.g. databases on RBD) will be modest.
-* **USB NIC:** USB autosuspend is disabled for the RTL8156B adapter via a udev rule, to
-  prevent link flaps on the cluster network. Use a USB 3 port.
+* **USB NIC:** the 2.5 GbE adapter is each node's only network link. It's matched by
+  the name pattern `enx*` (Ubuntu's name for USB NICs), so don't plug a second USB network
+  adapter into a node; the `network` role refuses to continue if more than one matches.
+  USB autosuspend is disabled for the RTL8156B via a udev rule to prevent link flaps.
+  Use a blue USB 3 port. If the adapter fails, the node is offline: Ceph keeps serving
+  from the other two nodes. Repair it through a keyboard and micro-HDMI console.
 * **Time sync matters.** MONs warn about clock skew above 0.05 s. chrony is managed by the
   `base` role.
 * **Ubuntu rather than Raspberry Pi OS:** Pi OS uses a 16K page kernel on the Pi 5, which
