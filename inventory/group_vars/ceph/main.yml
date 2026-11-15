@@ -1,0 +1,19 @@
+---
+# --- Ceph release -----------------------------------------------------------
+# Pin an exact release. Changing it and running `make upgrade` upgrades the cluster.
+ceph_version: "20.2.0"
+ceph_image: "quay.io/ceph/ceph:v{{ ceph_version }}"
+
+# --- Dashboard --------------------------------------------------------------
+ceph_dashboard_user: admin
+ceph_dashboard_password: "{{ vault_ceph_dashboard_password }}"
+
+# --- OSDs -------------------------------------------------------------------
+# Only disks with exactly this model string become OSDs (Kingston NV3 1 TB).
+# Verify with `lsblk -d -o NAME,MODEL` or `ceph orch device ls`.
+ceph_osd_device_model: "KINGSTON SNV3S1000G"
+
+# --- Placement labels -------------------------------------------------------
+# All nodes are admin nodes (hold ceph.conf + admin keyring) and run every daemon.
+ceph_host_labels: [_admin, mon, mgr, osd, mds]
+ceph_host_extra_labels: []

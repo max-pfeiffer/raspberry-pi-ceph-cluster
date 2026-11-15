@@ -1,0 +1,33 @@
+---
+- name: Ensure cluster NIC MAC is set
+  ansible.builtin.assert:
+    that:
+      - cluster_nic_mac is defined
+      - cluster_nic_mac != "00:00:00:00:00:00"
+    fail_msg: "Set cluster_nic_mac in inventory/host_vars/{{ inventory_hostname }}.yml (see README)."
+
+- name: Disable USB autosuspend for the 2.5 GbE adapter
+  ansible.builtin.template:
+    src: 70-usb-nic-power.rules.j2
+    dest: /etc/udev/rules.d/70-usb-nic-power.rules
+    mode: "0644"
+  notify: Reload udev
+
+- name: Write netplan configuration
+  ansible.builtin.template:
+    src: netplan.yaml.j2
+    dest: "{{ network_netplan_file }}"
+    mode: "0600"
+  notify: Apply netplan
+
+- name: Stop cloud-init from managing the network
+  ansible.builtin.copy:
+    dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    content: "network: {config: disabled}\n"
+    mode: "0644"
+
+- name: Remove cloud-init generated netplan file
+  ansible.builtin.file:
+    path: /etc/netplan/50-cloud-init.yaml
+    state: absent
+  notify: Apply netplan

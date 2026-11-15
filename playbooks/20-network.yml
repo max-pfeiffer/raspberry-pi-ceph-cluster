@@ -1,0 +1,6 @@
+---
+- name: Public and cluster network
+  hosts: ceph
+  become: true
+  roles:
+    - network

@@ -1,0 +1,71 @@
+---
+- name: Set hostname
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Manage /etc/hosts entries for all cluster nodes
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} ANSIBLE MANAGED BLOCK (ceph nodes)"
+    block: |
+      {% for host in groups['ceph'] %}
+      {{ hostvars[host].ansible_host }} {{ host }}.{{ domain }} {{ host }}
+      {% endfor %}
+
+- name: Set timezone
+  community.general.timezone:
+    name: "{{ timezone }}"
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configure chrony
+  ansible.builtin.template:
+    src: chrony.conf.j2
+    dest: /etc/chrony/chrony.conf
+    mode: "0644"
+  notify: Restart chrony
+
+- name: Enable chrony
+  ansible.builtin.service:
+    name: chrony
+    state: started
+    enabled: true
+
+- name: Configure unattended upgrades
+  ansible.builtin.template:
+    src: 52unattended-upgrades-local.j2
+    dest: /etc/apt/apt.conf.d/52unattended-upgrades-local
+    mode: "0644"
+
+- name: Configure firewall
+  when: firewall_enabled
+  block:
+    - name: Allow SSH
+      community.general.ufw:
+        rule: limit
+        port: "22"
+        proto: tcp
+
+    - name: Allow Ceph ports from trusted networks
+      community.general.ufw:
+        rule: allow
+        src: "{{ item.0 }}"
+        port: "{{ item.1 }}"
+        proto: tcp
+      loop: "{{ firewall_allowed_networks | product(firewall_ceph_ports) | list }}"
+
+    - name: Allow all traffic on the cluster network
+      community.general.ufw:
+        rule: allow
+        src: "{{ cluster_network }}"
+
+    - name: Enable firewall with default deny
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming

@@ -1,0 +1,11 @@
+---
+- name: Firmware
+  ansible.builtin.import_playbook: 00-firmware.yml
+- name: Base
+  ansible.builtin.import_playbook: 10-base.yml
+- name: Network
+  ansible.builtin.import_playbook: 20-network.yml
+- name: Ceph prerequisites
+  ansible.builtin.import_playbook: 30-ceph-prereqs.yml
+- name: Ceph cluster
+  ansible.builtin.import_playbook: 40-ceph-cluster.yml

@@ -1,0 +1,73 @@
+---
+- name: Install container runtime and Ceph prerequisites
+  ansible.builtin.apt:
+    name: "{{ ceph_prereq_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install cephadm {{ ceph_version }}
+  ansible.builtin.get_url:
+    url: "{{ cephadm_url }}"
+    dest: "{{ cephadm_path }}"
+    mode: "0755"
+    force: true
+
+- name: Pre-pull Ceph container image
+  ansible.builtin.command: podman pull {{ ceph_image }}
+  register: _pull
+  changed_when: "'Writing manifest' in _pull.stderr"
+
+- name: Find OSD devices
+  ansible.builtin.set_fact:
+    _osd_devices: >-
+      {{ ansible_facts.devices | dict2items
+         | selectattr('value.model', 'defined')
+         | selectattr('value.model', 'equalto', ceph_osd_device_model)
+         | map(attribute='key') | list }}
+
+- name: Ensure exactly one OSD device was found
+  ansible.builtin.assert:
+    that: _osd_devices | length == 1
+    fail_msg: >-
+      Expected one disk with model '{{ ceph_osd_device_model }}', found {{ _osd_devices }}.
+      Check the model string with `lsblk -d -o NAME,MODEL` and update ceph_osd_device_model.
+
+- name: Ensure the OSD device is not the root disk
+  ansible.builtin.assert:
+    that: >-
+      ansible_facts.mounts | selectattr('mount', 'equalto', '/') | map(attribute='device') | first
+      is not search('/dev/' ~ _osd_devices[0])
+    fail_msg: "/dev/{{ _osd_devices[0] }} holds the root filesystem."
+
+- name: Wipe OSD device
+  when: wipe_osd_disks | bool
+  block:
+    - name: Check whether the cluster is already bootstrapped
+      ansible.builtin.stat:
+        path: /etc/ceph/ceph.conf
+      register: _ceph_conf
+
+    - name: Refuse to wipe disks of a running cluster
+      ansible.builtin.assert:
+        that: not _ceph_conf.stat.exists
+        fail_msg: >-
+          The cluster already exists. Replace OSDs with
+          `ceph orch osd rm <id> --replace --zap` instead.
+
+    - name: Wipe /dev/{{ _osd_devices[0] }}
+      ansible.builtin.shell: |
+        set -euo pipefail
+        dev=/dev/{{ _osd_devices[0] }}
+        for vg in $(pvs --noheadings -o vg_name "$dev"* 2>/dev/null | sort -u); do
+          vgremove --force --yes "$vg"
+        done
+        wipefs --all "$dev"
+        sgdisk --zap-all "$dev"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+- name: Verify host meets cephadm requirements
+  ansible.builtin.command: "{{ cephadm_path }} check-host"
+  changed_when: false

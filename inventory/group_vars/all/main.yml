@@ -1,0 +1,28 @@
+---
+# --- Access -----------------------------------------------------------------
+admin_user: ansible
+ansible_user: "{{ admin_user }}"
+# Public key(s) authorized for admin_user via cloud-init.
+admin_ssh_public_keys:
+  - "{{ lookup('ansible.builtin.file', '~/.ssh/id_ed25519.pub') }}"
+
+# --- General ----------------------------------------------------------------
+domain: internal
+timezone: Etc/UTC
+ntp_pools:
+  - pool.ntp.org
+
+# --- Public network (onboard 1 GbE, eth0) -----------------------------------
+# Ceph public network: clients, MONs, management, SSH.
+public_interface: eth0
+public_network: 192.168.30.0/24
+public_gateway: 192.168.30.1
+dns_servers:
+  - 192.168.30.1
+
+# --- Cluster network (UGREEN 2.5 GbE USB adapter) ---------------------------
+# Ceph cluster network: OSD replication and heartbeat traffic only.
+# The adapter is matched by MAC (cluster_nic_mac in host_vars) and renamed.
+cluster_interface: cluster0
+cluster_network: 10.10.30.0/24
+cluster_mtu: 1500

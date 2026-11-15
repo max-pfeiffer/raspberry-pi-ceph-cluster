@@ -1,0 +1,12 @@
+---
+profile: production
+exclude_paths:
+  - .venv/
+  - build/
+  - .github/
+  - .idea/
+  - playbooks/templates/
+  - roles/*/templates/
+skip_list:
+  # Variables like ceph_version or cephadm_path are deliberately shared between roles.
+  - var-naming[no-role-prefix]

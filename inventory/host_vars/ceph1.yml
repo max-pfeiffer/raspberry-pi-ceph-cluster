@@ -1,0 +1,6 @@
+---
+# MAC address of the UGREEN 2.5 GbE USB adapter (see README, "Find the cluster NIC MAC").
+cluster_nic_mac: "00:00:00:00:00:00"
+
+# Run the monitoring stack (Prometheus, Grafana, Alertmanager) on this node only.
+ceph_host_extra_labels: [monitoring]

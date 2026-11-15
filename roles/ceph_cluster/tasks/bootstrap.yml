@@ -1,0 +1,31 @@
+---
+- name: Ensure dashboard password is set
+  ansible.builtin.assert:
+    that: ceph_dashboard_password is defined and ceph_dashboard_password | length >= 12
+    fail_msg: "Set vault_ceph_dashboard_password in inventory/group_vars/all/vault.yml (see README)."
+  no_log: true
+
+- name: Bootstrap cluster
+  ansible.builtin.command:
+    argv:
+      - "{{ cephadm_path }}"
+      - --image
+      - "{{ ceph_image }}"
+      - bootstrap
+      - --mon-ip
+      - "{{ ansible_host }}"
+      - --cluster-network
+      - "{{ cluster_network }}"
+      - --skip-monitoring-stack
+      - --initial-dashboard-user
+      - "{{ ceph_dashboard_user }}"
+      - --initial-dashboard-password
+      - "{{ ceph_dashboard_password }}"
+      - --dashboard-password-noupdate
+    creates: /etc/ceph/ceph.conf
+  no_log: true
+
+- name: Read cephadm SSH public key
+  ansible.builtin.slurp:
+    src: /etc/ceph/ceph.pub
+  register: _ceph_pub

@@ -1,0 +1,53 @@
+---
+# Upgrades the running cluster to ceph_version / ceph_image from the inventory.
+- name: Install matching cephadm on all nodes
+  hosts: ceph
+  become: true
+  roles:
+    - ceph_prereqs
+
+- name: Upgrade Ceph via the orchestrator
+  hosts: ceph_bootstrap
+  become: true
+  vars:
+    ceph_shell: /usr/local/sbin/cephadm shell --
+  tasks:
+    - name: Read running versions
+      ansible.builtin.command: "{{ ceph_shell }} ceph versions --format json"
+      register: _versions
+      changed_when: false
+
+    - name: Determine whether an upgrade is needed
+      ansible.builtin.set_fact:
+        _needs_upgrade: >-
+          {{ (_versions.stdout | from_json).overall.keys()
+             | reject('search', 'ceph version ' ~ ceph_version ~ ' ') | list | length > 0 }}
+
+    - name: Upgrade
+      when: _needs_upgrade | bool
+      block:
+        - name: Check cluster health before upgrading
+          ansible.builtin.command: "{{ ceph_shell }} ceph health"
+          register: _health
+          changed_when: false
+          failed_when: "'HEALTH_OK' not in _health.stdout"
+
+        - name: Start upgrade to {{ ceph_image }}
+          ansible.builtin.command: "{{ ceph_shell }} ceph orch upgrade start --image {{ ceph_image }}"
+          changed_when: true
+
+        - name: Wait for upgrade to finish
+          ansible.builtin.command: "{{ ceph_shell }} ceph orch upgrade status --format json"
+          register: _upgrade
+          until: not (_upgrade.stdout | from_json).in_progress
+          retries: 180
+          delay: 30
+          changed_when: false
+
+        - name: Verify all daemons run {{ ceph_version }}
+          ansible.builtin.command: "{{ ceph_shell }} ceph versions --format json"
+          register: _versions_after
+          changed_when: false
+          failed_when: >-
+            (_versions_after.stdout | from_json).overall.keys()
+            | reject('search', 'ceph version ' ~ ceph_version ~ ' ') | list | length > 0

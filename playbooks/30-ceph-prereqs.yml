@@ -1,0 +1,6 @@
+---
+- name: Ceph host prerequisites
+  hosts: ceph
+  become: true
+  roles:
+    - ceph_prereqs

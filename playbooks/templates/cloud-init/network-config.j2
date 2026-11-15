@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# First-boot network only. Ansible (role "network") takes over netplan afterwards.
+version: 2
+ethernets:
+  {{ public_interface }}:
+    dhcp4: false
+    addresses:
+      - {{ ansible_host }}/{{ public_network.split('/')[1] }}
+    routes:
+      - to: default
+        via: {{ public_gateway }}
+    nameservers:
+      addresses: [{{ dns_servers | join(', ') }}]
+      search: [{{ domain }}]

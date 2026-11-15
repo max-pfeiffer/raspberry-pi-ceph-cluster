@@ -1,0 +1,81 @@
+---
+- name: Read current cluster configuration
+  ansible.builtin.command: "{{ ceph_shell }} ceph config dump --format json"
+  register: _config_dump
+  changed_when: false
+
+- name: Set cluster configuration
+  ansible.builtin.command: "{{ ceph_shell }} ceph config set {{ item.who }} {{ item.option }} {{ item.value }}"
+  loop: "{{ ceph_config }}"
+  loop_control:
+    label: "{{ item.who }}/{{ item.option }}={{ item.value }}"
+  when: >-
+    (_config_dump.stdout | from_json
+     | selectattr('section', 'equalto', item.who)
+     | selectattr('name', 'equalto', item.option)
+     | map(attribute='value') | first | default('')) != item.value
+  changed_when: true
+
+- name: Create specs directory
+  ansible.builtin.file:
+    path: "{{ ceph_specs_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Render service specs
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ ceph_specs_dir }}/{{ item }}"
+    mode: "0600"
+  loop: [cluster.yml, cephfs.yml]
+
+# Specs are declarative: applying an unchanged spec is a no-op for the orchestrator.
+- name: Apply cluster spec (hosts, mon, mgr, osd, monitoring)
+  ansible.builtin.command: "{{ cephadm_path }} shell --mount {{ ceph_specs_dir }}:/specs -- ceph orch apply -i /specs/cluster.yml"
+  register: _apply_cluster
+  changed_when: false
+
+- name: Wait for all OSDs to be up
+  ansible.builtin.command: "{{ ceph_shell }} ceph osd stat --format json"
+  register: _osd_stat
+  until: (_osd_stat.stdout | from_json).num_up_osds | int >= ceph_expected_osds | int
+  retries: 60
+  delay: 20
+  changed_when: false
+
+- name: List pools
+  ansible.builtin.command: "{{ ceph_shell }} ceph osd pool ls --format json"
+  register: _pools
+  changed_when: false
+
+- name: Create RBD pools
+  ansible.builtin.command: >-
+    {{ ceph_shell }} sh -c 'ceph osd pool create {{ item.name }} && rbd pool init {{ item.name }}'
+  loop: "{{ ceph_rbd_pools }}"
+  when: item.name not in (_pools.stdout | from_json)
+  changed_when: true
+
+- name: List file systems
+  ansible.builtin.command: "{{ ceph_shell }} ceph fs ls --format json"
+  register: _filesystems
+  changed_when: false
+
+- name: Create CephFS volumes
+  ansible.builtin.command: "{{ ceph_shell }} ceph fs volume create {{ item.name }}"
+  loop: "{{ ceph_filesystems }}"
+  when: item.name not in (_filesystems.stdout | from_json | map(attribute='name') | list)
+  changed_when: true
+
+# Applied after `fs volume create`, which would otherwise reset MDS placement.
+- name: Apply CephFS MDS spec
+  ansible.builtin.command: "{{ cephadm_path }} shell --mount {{ ceph_specs_dir }}:/specs -- ceph orch apply -i /specs/cephfs.yml"
+  changed_when: false
+
+- name: Show cluster status
+  ansible.builtin.command: "{{ ceph_shell }} ceph -s"
+  register: _status
+  changed_when: false
+
+- name: Print cluster status
+  ansible.builtin.debug:
+    msg: "{{ _status.stdout_lines }}"

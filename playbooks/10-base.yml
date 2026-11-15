@@ -1,0 +1,6 @@
+---
+- name: OS baseline
+  hosts: ceph
+  become: true
+  roles:
+    - base

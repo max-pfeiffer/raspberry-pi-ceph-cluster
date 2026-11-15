@@ -1,0 +1,4 @@
+# {{ ansible_managed }}
+{% for id in network_usb_nic_ids %}
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="{{ id.vendor }}", ATTR{idProduct}=="{{ id.product }}", TEST=="power/control", ATTR{power/control}="on"
+{% endfor %}

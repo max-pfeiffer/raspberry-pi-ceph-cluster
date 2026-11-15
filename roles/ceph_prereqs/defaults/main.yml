@@ -1,0 +1,12 @@
+---
+cephadm_path: /usr/local/sbin/cephadm
+cephadm_url: "https://download.ceph.com/rpm-{{ ceph_version }}/el9/noarch/cephadm"
+
+ceph_prereq_packages:
+  - podman
+  - lvm2
+  - python3
+
+# DANGER: when true, OSD disks (matched by ceph_osd_device_model) are wiped.
+# Only allowed before the cluster is bootstrapped.
+wipe_osd_disks: false

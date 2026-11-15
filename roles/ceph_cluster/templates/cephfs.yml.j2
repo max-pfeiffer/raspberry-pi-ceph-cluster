@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+{% for fs in ceph_filesystems %}
+---
+service_type: mds
+service_id: {{ fs.name }}
+placement:
+  label: mds
+  count: {{ fs.mds_count | default(ceph_mds_count) }}
+{% endfor %}

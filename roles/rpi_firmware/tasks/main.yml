@@ -1,0 +1,53 @@
+---
+- name: Install Raspberry Pi firmware tools
+  ansible.builtin.apt:
+    name: rpi-eeprom
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Manage config.txt settings
+  ansible.builtin.blockinfile:
+    path: "{{ rpi_config_txt }}"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK (rpi_firmware)"
+    insertafter: EOF
+    block: |
+      [all]
+      {{ rpi_config_txt_lines | join('\n') }}
+  notify: Reboot
+
+- name: Manage bootloader EEPROM
+  when: rpi_manage_eeprom
+  block:
+    - name: Read current EEPROM configuration
+      ansible.builtin.command: rpi-eeprom-config
+      register: _eeprom
+      changed_when: false
+
+    - name: Determine whether EEPROM settings differ
+      ansible.builtin.set_fact:
+        _eeprom_needs_update: >-
+          {%- set ns = namespace(diff=false) -%}
+          {%- for k, v in rpi_eeprom_config.items() -%}
+          {%- if (k ~ '=' ~ v) not in _eeprom.stdout_lines -%}{%- set ns.diff = true -%}{%- endif -%}
+          {%- endfor -%}
+          {{ ns.diff }}
+
+    - name: Write desired EEPROM configuration
+      ansible.builtin.copy:
+        dest: /run/eeprom-desired.conf
+        mode: "0600"
+        content: |
+          {% for line in _eeprom.stdout_lines if line.split('=')[0] not in rpi_eeprom_config %}
+          {{ line }}
+          {% endfor %}
+          {% for k, v in rpi_eeprom_config.items() %}
+          {{ k }}={{ v }}
+          {% endfor %}
+      when: _eeprom_needs_update | bool
+
+    - name: Apply EEPROM configuration (takes effect after reboot)
+      ansible.builtin.command: rpi-eeprom-config --apply /run/eeprom-desired.conf
+      when: _eeprom_needs_update | bool
+      changed_when: true
+      notify: Reboot

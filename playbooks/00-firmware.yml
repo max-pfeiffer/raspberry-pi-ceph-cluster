@@ -1,0 +1,7 @@
+---
+- name: Raspberry Pi firmware and boot configuration
+  hosts: ceph
+  become: true
+  serial: 1  # reboots happen one node at a time
+  roles:
+    - rpi_firmware

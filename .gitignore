@@ -1,0 +1,9 @@
+# Rendered cloud-init files (contain SSH keys and host specifics)
+build/
+
+# Local secrets
+.vault-pass
+
+# Python / Ansible
+.venv/
+*.retry

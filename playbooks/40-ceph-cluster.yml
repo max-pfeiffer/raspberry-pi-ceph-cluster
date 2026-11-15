@@ -1,0 +1,27 @@
+---
+- name: Bootstrap Ceph
+  hosts: ceph_bootstrap
+  become: true
+  tasks:
+    - name: Bootstrap first node
+      ansible.builtin.include_role:
+        name: ceph_cluster
+        tasks_from: bootstrap
+
+- name: Authorize cephadm on all nodes
+  hosts: ceph
+  become: true
+  tasks:
+    - name: Authorize cephadm SSH key
+      ansible.builtin.include_role:
+        name: ceph_cluster
+        tasks_from: authorize
+
+- name: Converge Ceph services, configuration, pools and file systems
+  hosts: ceph_bootstrap
+  become: true
+  tasks:
+    - name: Converge cluster
+      ansible.builtin.include_role:
+        name: ceph_cluster
+        tasks_from: converge

@@ -1,0 +1,26 @@
+#cloud-config
+# {{ ansible_managed }}
+hostname: {{ inventory_hostname }}
+fqdn: {{ inventory_hostname }}.{{ domain }}
+prefer_fqdn_over_hostname: false
+manage_etc_hosts: false
+timezone: {{ timezone }}
+
+users:
+  - name: {{ admin_user }}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+{% for key in admin_ssh_public_keys %}
+      - {{ key }}
+{% endfor %}
+
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+package_upgrade: true
+packages:
+  - python3

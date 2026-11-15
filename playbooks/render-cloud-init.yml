@@ -1,0 +1,21 @@
+---
+# Renders per-node cloud-init files from the inventory into build/cloud-init/<host>/.
+# Copy them onto the "system-boot" partition after flashing Ubuntu (see README).
+- name: Render cloud-init files
+  hosts: ceph
+  gather_facts: false
+  tasks:
+    - name: Create output directory
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../build/cloud-init/{{ inventory_hostname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+
+    - name: Render cloud-init file
+      ansible.builtin.template:
+        src: "cloud-init/{{ item }}.j2"
+        dest: "{{ playbook_dir }}/../build/cloud-init/{{ inventory_hostname }}/{{ item }}"
+        mode: "0600"
+      loop: [user-data, network-config, meta-data]
+      delegate_to: localhost

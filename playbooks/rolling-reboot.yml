@@ -1,0 +1,40 @@
+---
+# Reboots nodes one at a time (e.g. after kernel updates) and waits until the
+# cluster has recovered before moving on.
+- name: Prepare cluster for maintenance
+  hosts: ceph_bootstrap
+  become: true
+  tasks:
+    - name: Set noout
+      ansible.builtin.command: /usr/local/sbin/cephadm shell -- ceph osd set noout
+      changed_when: true
+
+- name: Reboot nodes one by one
+  hosts: ceph
+  become: true
+  serial: 1
+  vars:
+    _admin_peer: "{{ groups['ceph'] | difference([inventory_hostname]) | first }}"
+  tasks:
+    - name: Reboot
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+
+    - name: Wait until the only remaining health warning is the noout flag
+      ansible.builtin.command: /usr/local/sbin/cephadm shell -- ceph health --format json
+      delegate_to: "{{ _admin_peer }}"
+      register: _health
+      until: >-
+        (_health.stdout | from_json).checks | default({}) | list
+        | difference(['OSDMAP_FLAGS']) | length == 0
+      retries: 90
+      delay: 20
+      changed_when: false
+
+- name: Finish maintenance
+  hosts: ceph_bootstrap
+  become: true
+  tasks:
+    - name: Unset noout
+      ansible.builtin.command: /usr/local/sbin/cephadm shell -- ceph osd unset noout
+      changed_when: true
