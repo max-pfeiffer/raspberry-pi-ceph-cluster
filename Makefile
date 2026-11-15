@@ -47,14 +47,21 @@ lint: $(DEPS) ## Run yamllint, ansible-lint, shellcheck and the vault encryption
 	$(RUN) shellcheck scripts/*.sh
 	scripts/check-vault-encrypted.sh $$(git ls-files '*vault.yml')
 
-# A dummy SSH key keeps the rendering independent of the workstation. The output
-# goes to its own directory, so it's never mistaken for the real cloud-init files.
-TEST_DIR  := build/test
-TEST_ARGS := -e '{"render_dir": "$(CURDIR)/$(TEST_DIR)", "admin_ssh_public_keys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleXRlc3Rr test"]}'
+# Runs against a copy of the inventory without vault.yml, with dummy secrets and
+# a dummy SSH key: no vault password is needed (CI, Dependabot and fork PRs have
+# none) and the result doesn't depend on the workstation. The output goes to its
+# own directory, so it's never mistaken for the real cloud-init files.
+TEST_DIR      := build/test
+TEST_ARGS     := -e '{"render_dir": "$(CURDIR)/$(TEST_DIR)", "vault_ceph_dashboard_password": "test-password-not-used", "vault_ceph_grafana_password": "test-password-not-used", "admin_ssh_public_keys": ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleXRlc3Rr test"]}'
+TEST_PLAYBOOK := $(RUN) ansible-playbook -i $(TEST_DIR)/inventory/hosts.yml $(TEST_ARGS)
 
-test: $(DEPS) ## Syntax-check all playbooks, render cloud-init files and service specs, validate the results
-	for playbook in playbooks/*.yml; do $(PLAYBOOK) --syntax-check "$$playbook"; done
-	$(PLAYBOOK) $(TEST_ARGS) playbooks/render-cloud-init.yml playbooks/render-specs.yml
+test: $(DEPS) ## Syntax-check all playbooks, render cloud-init files and service specs, validate the results (needs no vault password)
+	rm -rf $(TEST_DIR)
+	mkdir -p $(TEST_DIR)
+	cp -R inventory $(TEST_DIR)/inventory
+	rm -f $(TEST_DIR)/$(VAULT_FILE)
+	for playbook in playbooks/*.yml; do $(TEST_PLAYBOOK) --syntax-check "$$playbook"; done
+	$(TEST_PLAYBOOK) playbooks/render-cloud-init.yml playbooks/render-specs.yml
 	$(RUN) python -c 'import sys, yaml; [list(yaml.safe_load_all(open(f))) for f in sys.argv[1:]]' $(TEST_DIR)/cloud-init/*/* $(TEST_DIR)/specs/*
 	@if command -v cloud-init >/dev/null; then \
 	  for f in $(TEST_DIR)/cloud-init/*/user-data; do cloud-init schema --config-file "$$f"; done; \

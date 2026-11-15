@@ -40,13 +40,15 @@
           changed_when: true
 
         # A failed upgrade pauses but stays "in progress", so stop waiting then.
+        # The status command itself fails while the MGRs restart; that's retried.
         - name: Wait for upgrade to finish
           ansible.builtin.command: "{{ ceph_shell }} ceph orch upgrade status --format json"
           register: _upgrade
           until: >-
-            not (_upgrade.stdout | from_json).in_progress
-            or (_upgrade.stdout | from_json).is_paused | default(false)
-          failed_when: (_upgrade.stdout | from_json).is_paused | default(false)
+            _upgrade.rc == 0
+            and (not (_upgrade.stdout | from_json).in_progress
+                 or (_upgrade.stdout | from_json).is_paused | default(false))
+          failed_when: _upgrade.rc == 0 and (_upgrade.stdout | from_json).is_paused | default(false)
           retries: 180
           delay: 30
           changed_when: false

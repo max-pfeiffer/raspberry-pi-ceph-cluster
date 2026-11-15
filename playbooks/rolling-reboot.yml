@@ -1,6 +1,7 @@
 ---
 # Reboots nodes one at a time (e.g. after kernel updates). Requires a healthy
 # cluster to start, waits for recovery after each node, and always clears noout.
+# With --limit only the matching nodes are rebooted.
 - name: Select admin node
   ansible.builtin.import_playbook: select-admin.yml
 
@@ -27,7 +28,7 @@
           ansible.builtin.include_role:
             name: ceph_maintenance
             tasks_from: reboot_node
-          loop: "{{ groups['ceph'] }}"
+          loop: "{{ groups['ceph'] | select('in', query('ansible.builtin.inventory_hostnames', ansible_limit | default('all'))) }}"
           loop_control:
             loop_var: ceph_maintenance_node
       always:

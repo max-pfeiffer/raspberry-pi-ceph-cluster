@@ -1,11 +1,18 @@
 ---
 # Reloading alone would apply the rules only when the adapter is plugged in
-# again; the trigger replays the "add" event for adapters that are already there.
+# again, so the attribute is also set on adapters that are already there.
+# Written to sysfs directly rather than with `udevadm trigger`: replaying an
+# "add" event on the node's only network link is not worth the risk.
 - name: Reload udev
-  ansible.builtin.shell: >-
+  ansible.builtin.shell: |
+    set -eu
     udevadm control --reload-rules
-    {% for id in network_usb_nic_ids %}
-    && udevadm trigger --action=add --subsystem-match=usb
-    --attr-match=idVendor={{ id.vendor }} --attr-match=idProduct={{ id.product }}
-    {% endfor %}
+    for dev in /sys/bus/usb/devices/*; do
+      [ -f "$dev/idVendor" ] && [ -f "$dev/power/control" ] || continue
+      case " {{ _usb_nic_ids }} " in
+        *" $(cat "$dev/idVendor"):$(cat "$dev/idProduct") "*) echo on > "$dev/power/control" ;;
+      esac
+    done
+  vars:
+    _usb_nic_ids: "{{ network_usb_nic_ids | map(attribute='vendor') | zip(network_usb_nic_ids | map(attribute='product')) | map('join', ':') | join(' ') }}"
   changed_when: true

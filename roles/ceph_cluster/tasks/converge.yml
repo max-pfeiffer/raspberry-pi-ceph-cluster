@@ -105,20 +105,33 @@
   when: item in (_services.stdout | from_json | map(attribute='service_name') | list)
   changed_when: true
 
-- name: Wait for all OSDs to be up
-  ansible.builtin.command: "{{ ceph_shell }} ceph osd stat --format json"
-  register: _osd_stat
-  until: (_osd_stat.stdout | from_json).num_up_osds | int >= ceph_expected_osds | int
-  retries: 60
-  delay: 20
-  changed_when: false
-  check_mode: false
-
 - name: List pools
   ansible.builtin.command: "{{ ceph_shell }} ceph osd pool ls detail --format json"
   register: _pools
   changed_when: false
   check_mode: false
+
+- name: List file systems
+  ansible.builtin.command: "{{ ceph_shell }} ceph fs ls --format json"
+  register: _filesystems
+  changed_when: false
+  check_mode: false
+
+# Only needed to create pools and file systems. Once they exist, the cluster
+# can be converged while a node is down.
+- name: Wait for all OSDs to be up
+  ansible.builtin.command: "{{ ceph_shell }} ceph osd stat --format json"
+  register: _osd_stat
+  until: _osd_stat.rc == 0 and (_osd_stat.stdout | from_json).num_up_osds | int >= ceph_expected_osds | int
+  retries: 60
+  delay: 20
+  changed_when: false
+  check_mode: false
+  when: >-
+    ceph_rbd_pools | map(attribute='name')
+    | difference(_pools.stdout | from_json | map(attribute='pool_name')) | length > 0
+    or ceph_filesystems | map(attribute='name')
+    | difference(_filesystems.stdout | from_json | map(attribute='name')) | length > 0
 
 - name: Create RBD pools
   ansible.builtin.command: "{{ ceph_shell }} ceph osd pool create {{ item.name }}"
@@ -136,12 +149,6 @@
                   | selectattr('pool_name', 'equalto', item.name)
                   | map(attribute='application_metadata') | first | default({}))
   changed_when: true
-
-- name: List file systems
-  ansible.builtin.command: "{{ ceph_shell }} ceph fs ls --format json"
-  register: _filesystems
-  changed_when: false
-  check_mode: false
 
 - name: Create CephFS volumes
   ansible.builtin.command: "{{ ceph_shell }} ceph fs volume create {{ item.name }}"

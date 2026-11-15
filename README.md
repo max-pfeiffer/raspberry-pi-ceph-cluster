@@ -143,9 +143,6 @@ uv run ansible-vault encrypt inventory/group_vars/all/vault.yml
 Commit the encrypted `vault.yml`. To avoid typing the vault password each time, put it in
 `.vault-pass` (git-ignored, `chmod 600`). The Makefile picks it up automatically.
 
-Once `vault.yml` is committed, CI needs the vault password to render the templates
-(`make test`): add it as the repository secret `ANSIBLE_VAULT_PASSWORD`.
-
 `vault_ceph_grafana_password` is optional. If set, Grafana gets an admin user when it's
 first deployed; otherwise Grafana is read-only.
 
@@ -333,12 +330,13 @@ or `ceph_filesystems` in the inventory.
 | Review the service specs    | `make specs` renders them into `build/specs/` without touching the cluster                           |
 | Preview a spec change       | `sudo cephadm shell --mount /etc/ceph/specs:/specs -- ceph orch apply -i /specs/cluster.yml --dry-run` |
 | Upgrade Ceph                | `scripts/ceph-release-pins.sh <version>`, copy the three values into `group_vars/ceph/main.yml`, `make upgrade` |
+| Reboot a single node        | `make reboot ANSIBLE_ARGS="--limit ceph2"`                                                            |
 | Reboot after kernel updates | `make reboot`: requires a healthy cluster, sets `noout`, asks the orchestrator whether each node is safe to stop, reboots one node at a time, waits for recovery, always unsets `noout` |
 | Replace a failed OSD        | `ceph orch osd rm <id> --replace --zap`, swap disk; the OSD spec redeploys it                        |
 | Replace a node (new OS disk) | Flash it as in steps 6 to 8, run `make site` **without** `wipe_osd_disks`. The node rejoins the existing cluster. If its Kingston disk still holds the OSD, bring it back with `ceph cephadm osd activate <host>` |
 | Check memory headroom       | `ceph orch ps` (column `MEM USE`) and `free -h` on each node, after a few days of real load           |
 | Dry run of all changes      | `make check` (`--check --diff`, changes nothing; reads the live cluster state, so it needs an installed cluster) |
-| Lint and test               | `make lint` (yamllint, ansible-lint, shellcheck, vault check) and `make test` (syntax check, renders cloud-init files and specs); CI runs both |
+| Lint and test               | `make lint` (yamllint, ansible-lint, shellcheck, vault check) and `make test` (syntax check, renders cloud-init files and specs with dummy secrets, needs no vault password); CI runs both |
 
 Unattended-upgrades installs security updates but never reboots a node on its own.
 Upgrades run at staggered times (ceph1 03:00, ceph2 04:00, ceph3 05:00), and
