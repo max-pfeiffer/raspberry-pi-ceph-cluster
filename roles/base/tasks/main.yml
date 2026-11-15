@@ -47,7 +47,7 @@
   ansible.builtin.copy:
     dest: /etc/needrestart/conf.d/50-ceph.conf
     content: |
-      # {{ ansible_managed }}
+      # Ansible managed
       # Ceph daemons are restarted by `make reboot` or the orchestrator only.
       $nrconf{override_rc}{qr(^ceph-)} = 0;
     mode: "0644"
@@ -62,7 +62,7 @@
   ansible.builtin.copy:
     dest: /etc/systemd/system/apt-daily-upgrade.timer.d/50-stagger.conf
     content: |
-      # {{ ansible_managed }}
+      # Ansible managed
       [Timer]
       OnCalendar=
       OnCalendar=*-*-* {{ base_upgrade_time }}
