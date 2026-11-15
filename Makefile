@@ -73,8 +73,9 @@ test: $(DEPS) ## Syntax-check all playbooks, render and validate cloud-init file
 	    cloud-init schema --config-file "$$d/network-config" --schema-type network-config; \
 	  done; \
 	else $(call SKIP_OR_FAIL,cloud-init); fi
+	@# An absolute path: netplan's generator resolves a relative --root-dir against /.
 	@if command -v netplan >/dev/null; then \
-	  for d in $(TEST_DIR)/netplan/*; do echo "netplan generate: $$d"; netplan generate --root-dir "$$d"; done; \
+	  for d in $(CURDIR)/$(TEST_DIR)/netplan/*; do echo "netplan generate: $$d"; netplan generate --root-dir "$$d"; done; \
 	else $(call SKIP_OR_FAIL,netplan); fi
 
 check-pins: ## Check that the cephadm checksum and image digest in the inventory belong to ceph_version (needs network)
