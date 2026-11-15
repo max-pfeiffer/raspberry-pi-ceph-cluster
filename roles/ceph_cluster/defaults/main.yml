@@ -27,6 +27,8 @@ ceph_config:
   - { who: mon, option: mon_memory_target, value: "1073741824" }      # 1 GiB
   - { who: mds, option: mds_cache_memory_limit, value: "1073741824" } # 1 GiB
   - { who: mon, option: mon_allow_pool_delete, value: "false" }
+# Appended to ceph_config, to add options without repeating the list.
+ceph_config_extra: []
 
 # Replicated RBD pools (size 3 / min_size 2 are the Ceph defaults).
 ceph_rbd_pools:

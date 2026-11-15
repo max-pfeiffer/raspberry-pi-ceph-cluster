@@ -79,6 +79,7 @@ roles/ceph_cluster/templates/   cephadm service specs (cluster.yml, cephfs.yml)
 scripts/flash-os-disk.sh        Writes Ubuntu + cloud-init onto the OS disk
 scripts/ceph-release-pins.sh    Prints the version pins for a Ceph release
 scripts/check-vault-encrypted.sh  Fails on a plain-text vault.yml (pre-commit, `make lint`)
+tests/                          Template rendering for `make test`, CI integration test
 ```
 
 Principles:
@@ -335,12 +336,29 @@ or `ceph_filesystems` in the inventory.
 | Replace a node (new OS disk) | Flash it as in steps 6 to 8, run `make site` **without** `wipe_osd_disks`. The node rejoins the existing cluster. If its Kingston disk still holds the OSD, bring it back with `ceph cephadm osd activate <host>` |
 | Check memory headroom       | `ceph orch ps` (column `MEM USE`) and `free -h` on each node, after a few days of real load           |
 | Dry run of all changes      | `make check` (`--check --diff`, changes nothing; reads the live cluster state, so it needs an installed cluster) |
-| Lint and test               | `make lint` (yamllint, ansible-lint, shellcheck, vault check) and `make test` (syntax check, renders cloud-init files and specs with dummy secrets, needs no vault password); CI runs both |
+| Lint and test               | `make lint` (yamllint, ansible-lint, shellcheck, actionlint, vault check) and `make test` (syntax check; renders cloud-init files, netplan and specs with dummy secrets and validates them; needs no vault password); CI runs both |
+| Check the release pins      | `make check-pins`: the cephadm checksum and image digest in the inventory must belong to `ceph_version` |
 
 Unattended-upgrades installs security updates but never reboots a node on its own.
 Upgrades run at staggered times (ceph1 03:00, ceph2 04:00, ceph3 05:00), and
 needrestart is configured never to restart Ceph daemons. Use `make reboot` to pick up
 kernel and library updates with only one node down at a time.
+
+## Continuous integration
+
+Two workflows run on every push to `main` and every pull request:
+
+* **lint:** `make lint`, `make test`, `make check-pins`, and a secret scan of the whole
+  git history (gitleaks).
+* **integration:** `tests/integration/run.sh` runs the real `base`, `ceph_prereqs` and
+  `ceph_cluster` playbooks against an arm64 runner and builds a single-node Ceph cluster
+  on it, with the OSD on a logical volume. It then waits for a healthy cluster, runs
+  everything a second time (which must change nothing) and once more in check mode, and
+  verifies the OSD, the `rbd` pool and the `cephfs` file system. The test's overrides
+  are in `tests/integration/vars.yml`.
+
+CI can't cover the Raspberry Pi firmware, the netplan change on the USB adapter,
+reboots, upgrades, or anything that needs more than one node.
 
 ## Notes and pitfalls
 

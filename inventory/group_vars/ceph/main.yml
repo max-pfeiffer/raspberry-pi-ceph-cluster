@@ -20,6 +20,9 @@ ceph_dashboard_password: "{{ vault_ceph_dashboard_password }}"
 # Only disks with exactly this model string become OSDs (Kingston NV3 1 TB).
 # Verify with `lsblk -d -o NAME,MODEL` or `ceph orch device ls`.
 ceph_osd_device_model: "KINGSTON SNV3S1000G"
+# Device selection of the OSD service spec (`data_devices`).
+ceph_osd_data_devices:
+  model: "{{ ceph_osd_device_model }}"
 
 # --- Placement labels -------------------------------------------------------
 # All nodes are admin nodes (hold ceph.conf + admin keyring) and run MON, MGR and

@@ -1,0 +1,20 @@
+---
+# Renders each node's netplan configuration into a root directory of its own,
+# so `make test` can validate it with `netplan generate --root-dir`.
+- name: Render netplan configuration
+  hosts: ceph
+  gather_facts: false
+  tasks:
+    - name: Create output directory
+      ansible.builtin.file:
+        path: "{{ render_dir }}/netplan/{{ inventory_hostname }}/etc/netplan"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+
+    - name: Render netplan configuration
+      ansible.builtin.template:
+        src: ../roles/network/templates/netplan.yaml.j2
+        dest: "{{ render_dir }}/netplan/{{ inventory_hostname }}/etc/netplan/10-ceph.yaml"
+        mode: "0600"
+      delegate_to: localhost

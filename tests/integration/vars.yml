@@ -1,0 +1,25 @@
+---
+# Overrides for the CI integration test (passed as extra vars): one node, one
+# OSD on a logical volume, no redundancy.
+public_network: "{{ lookup('ansible.builtin.env', 'CI_NODE_IP') }}/32"
+vault_ceph_dashboard_password: integration-test-only
+
+# The single node runs everything.
+ceph_host_extra_labels: [monitoring, mds]
+ceph_mgr_count: 1
+ceph_mds_count: 1
+
+# The OSD is a logical volume on a loop device (created by run.sh), so there
+# is no disk to select by model.
+ceph_prereqs_check_osd_disk: false
+ceph_osd_data_devices:
+  paths: [/dev/ci-osd/data]
+
+# One OSD can't hold three replicas.
+ceph_config_extra:
+  - { who: global, option: osd_pool_default_size, value: "1" }
+  - { who: global, option: mon_allow_pool_size_one, value: "true" }
+  - { who: global, option: mon_warn_on_pool_no_redundancy, value: "false" }
+
+# A single MDS has no standby, and runners have little free disk space.
+ceph_health_allowed_checks: [MDS_INSUFFICIENT_STANDBY, MON_DISK_LOW]

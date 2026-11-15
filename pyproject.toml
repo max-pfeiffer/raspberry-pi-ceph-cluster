@@ -12,6 +12,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "actionlint-py>=1.7",
     "ansible-lint>=26.11",
     "pre-commit>=4",
     "shellcheck-py>=0.10",

@@ -7,7 +7,7 @@
 
 - name: Set cluster configuration
   ansible.builtin.command: "{{ ceph_shell }} ceph config set {{ item.who }} {{ item.option }} {{ item.value }}"
-  loop: "{{ ceph_config }}"
+  loop: "{{ ceph_config + ceph_config_extra }}"
   loop_control:
     label: "{{ item.who }}/{{ item.option }}={{ item.value }}"
   when: >-

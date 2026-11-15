@@ -7,6 +7,12 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "actionlint-py"
+version = "1.7.12.25"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/75/36ee89db39bb3620d1e46fe1f6ec77d6000d30ff45345699e51b4c850e83/actionlint_py-1.7.12.25.tar.gz", hash = "sha256:83f83be4cd317c79b15cbb7022787513a6994f00bfb2dd8da02fa4e62b4f640d", size = 12438, upload-time = "2026-09-22T16:24:42.477Z" }
+
+[[package]]
 name = "ansible-compat"
 version = "26.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -577,6 +583,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "actionlint-py" },
     { name = "ansible-lint" },
     { name = "pre-commit" },
     { name = "shellcheck-py" },
@@ -588,6 +595,7 @@ requires-dist = [{ name = "ansible-core", specifier = ">=2.20,<2.21" }]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "actionlint-py", specifier = ">=1.7" },
     { name = "ansible-lint", specifier = ">=26.11" },
     { name = "pre-commit", specifier = ">=4" },
     { name = "shellcheck-py", specifier = ">=0.10" },

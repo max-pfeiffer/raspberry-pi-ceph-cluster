@@ -29,6 +29,11 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: actionlint
+        name: actionlint
+        entry: uv run --no-sync actionlint
+        language: system
+        files: ^\.github/workflows/
       - id: shellcheck
         name: shellcheck
         entry: uv run --no-sync shellcheck

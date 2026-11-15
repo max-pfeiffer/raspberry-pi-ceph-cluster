@@ -25,8 +25,7 @@ service_id: nvme
 placement:
   label: osd
 spec:
-  data_devices:
-    model: "{{ ceph_osd_device_model }}"
+  data_devices: {{ ceph_osd_data_devices | to_json }}
 {% if ceph_monitoring_enabled %}
 ---
 service_type: node-exporter

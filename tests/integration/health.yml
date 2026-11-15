@@ -1,0 +1,13 @@
+---
+# Runs the health gate of the maintenance playbooks against the test cluster.
+- name: Wait for a healthy cluster
+  hosts: ceph
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for a healthy cluster
+      ansible.builtin.include_role:
+        name: ceph_maintenance
+        tasks_from: wait_healthy
+      vars:
+        ceph_maintenance_retries: 45
