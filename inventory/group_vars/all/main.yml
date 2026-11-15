@@ -9,8 +9,6 @@ admin_ssh_public_keys:
 # --- General ----------------------------------------------------------------
 domain: internal
 timezone: Etc/UTC
-ntp_pools:
-  - pool.ntp.org
 
 # --- Network (UGREEN 2.5 GbE USB adapter) -----------------------------------
 # The only network: Ceph public network (clients, MONs, OSD replication) plus SSH

@@ -33,8 +33,7 @@
       existing one. Make all nodes reachable and rerun without --limit.
   when: ceph_cluster_fsids | length == 0
 
-# No --initial-dashboard-password: it would be visible in the process list.
-# cephadm generates a random one, and converge.yml sets the real one from a file.
+# The dashboard password is only set here. Change it later in the dashboard.
 - name: Bootstrap cluster
   ansible.builtin.command:
     argv:
@@ -47,6 +46,8 @@
       - --skip-monitoring-stack
       - --initial-dashboard-user
       - "{{ ceph_dashboard_user }}"
+      - --initial-dashboard-password
+      - "{{ ceph_dashboard_password }}"
       - --dashboard-password-noupdate
   when: ceph_cluster_fsids | length == 0
   changed_when: true

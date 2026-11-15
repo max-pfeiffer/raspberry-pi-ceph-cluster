@@ -57,7 +57,7 @@ no separate cluster (replication) network.
 ansible.cfg, Makefile           Entry points (`make help`)
 inventory/
   hosts.yml                     Nodes, IPs, preferred admin/bootstrap node
-  group_vars/all/main.yml       Networks, admin user, NTP, timezone
+  group_vars/all/main.yml       Networks, admin user, timezone
   group_vars/all/vault.yml      Secrets, encrypted with ansible-vault (you create it)
   group_vars/ceph/main.yml      Ceph version + checksums, OSD disk model, placement labels
   host_vars/cephN.yml           Per node labels (ceph1: monitoring, ceph2/3: mds)
@@ -85,7 +85,7 @@ Principles:
 
 * **Git is the source of truth.** Every change is made in the repo and applied with
   `make site`. Don't use `ceph config set` by hand for anything that should persist.
-  Removals are explicit: something that is just deleted from the repo stays on the
+  Removals are manual: something that is just deleted from the repo stays on the
   cluster (see "Remove something" under Day-2 operations).
 * **Idempotent.** Running `make site` again changes nothing on a converged cluster.
 * **Declarative Ceph.** Daemons and OSDs are described in cephadm service specs and
@@ -271,13 +271,12 @@ node" under Day-2 operations).
 
 `make ceph` checks all nodes for an existing cluster and bootstraps one on `ceph1` only
 if no node runs Ceph daemons and every node could be checked. It then authorizes the
-cephadm SSH key on all nodes, applies the configuration, sets the dashboard password,
+cephadm SSH key on all nodes, applies the configuration,
 applies the service specs (hosts, MON, MGR, OSD, monitoring), waits until all 3 OSDs are
 up, then creates the `rbd` pool and the `cephfs` file system.
 
-The bootstrap output is hidden because it contains a generated dashboard password
-(replaced by yours right after). If bootstrap fails, rerun with
-`make ceph ANSIBLE_ARGS="-e ceph_debug=true"` to see it. If a failed bootstrap
+The bootstrap output is hidden because it contains the dashboard password. If bootstrap
+fails, rerun with `make ceph ANSIBLE_ARGS="-e ceph_debug=true"` to see it. If a failed bootstrap
 leaves a half-built cluster behind, the playbook stops and prints the cleanup commands.
 
 ### 10. Verify
@@ -325,8 +324,8 @@ or `ceph_filesystems` in the inventory.
 | Task                        | How                                                                                                  |
 |-----------------------------|------------------------------------------------------------------------------------------------------|
 | Change configuration        | Edit the inventory / role defaults, run `make site`                                                  |
-| Remove something            | Config option: keep its `ceph_config` entry and add `state: absent`. Service: add it to `ceph_services_absent`. Firewall port: move it to `firewall_ceph_ports_absent`. Then `make site` |
-| Change the dashboard password | Change it in the vault, run `make ceph`                                                            |
+| Remove something            | Delete it from the repo, then remove it on the cluster by hand: `ceph config rm <who> <option>` for a config option, `ceph orch rm <service>` for a service (e.g. the monitoring stack after setting `ceph_monitoring_enabled: false`) |
+| Change the dashboard password | In the dashboard, or `ceph dashboard ac-user-set-password admin -i <file>`. The vault value is only used at bootstrap |
 | Review the service specs    | `make specs` renders them into `build/specs/` without touching the cluster                           |
 | Preview a spec change       | `sudo cephadm shell --mount /etc/ceph/specs:/specs -- ceph orch apply -i /specs/cluster.yml --dry-run` |
 | Upgrade Ceph                | `scripts/ceph-release-pins.sh <version>`, copy the three values into `group_vars/ceph/main.yml`, `make upgrade` |
@@ -362,11 +361,13 @@ kernel and library updates with only one node down at a time.
   (swapping Ceph daemons hurts more than it helps).
 * **Alerts go nowhere by default.** Alertmanager only shows them in its UI and the
   dashboard. Set `ceph_alertmanager_webhook_urls` to get notified.
+* **Firewall:** nodes accept TCP from `public_network` on every port and SSH from
+  anywhere; everything else is denied. The network is the trust boundary.
 * **SSH is open to every network** that can route to the nodes (key-only logins). To
   restrict it, set `firewall_ssh_allowed_networks`; include your workstation's network
   and the cluster network, or you lock yourself and cephadm out.
-* **Time sync matters.** MONs warn about clock skew above 0.05 s. chrony is managed by the
-  `base` role.
+* **Time sync matters.** MONs warn about clock skew above 0.05 s. The `base` role installs chrony
+  with Ubuntu's default configuration (Ubuntu's NTP pools, clock stepped at boot).
 * **Ubuntu rather than Raspberry Pi OS:** Pi OS uses a 16K page kernel on the Pi 5, which
   can break some arm64 container images. Ubuntu uses 4K pages and is a supported cephadm
   platform.

@@ -1,6 +1,6 @@
 ---
 base_packages:
-  - chrony
+  - chrony  # with Ubuntu's default configuration
   - curl
   - ca-certificates
   - gdisk
@@ -17,7 +17,8 @@ base_unattended_reboot: false
 base_upgrade_time: "{{ '%02d:00' | format(3 + groups['ceph'].index(inventory_hostname)) }}"
 
 firewall_enabled: true
-# Networks allowed to reach Ceph and monitoring services.
+# Networks that may reach every TCP port: Ceph, dashboard and monitoring. The
+# trust boundary is the network, so there is no list of Ceph ports to maintain.
 firewall_allowed_networks:
   - "{{ public_network }}"
 # Sources allowed to reach SSH. The default is open, because narrowing it can
@@ -26,18 +27,3 @@ firewall_allowed_networks:
 # Once `any` is no longer in the list, the open rule is deleted.
 firewall_ssh_allowed_networks:
   - any
-firewall_ceph_ports:
-  - "3300"        # mon msgr2
-  - "6789"        # mon msgr1
-  - "6800:7568"   # osd, mgr, mds
-  - "8443"        # dashboard
-  - "8765"        # cephadm service discovery
-  - "9283"        # mgr prometheus exporter
-  - "9100"        # node-exporter
-  - "9926"        # ceph-exporter
-  - "9095"        # prometheus
-  - "3000"        # grafana
-  - "9093:9094"   # alertmanager
-# Ports to close again. A port that is just deleted from firewall_ceph_ports
-# stays open, so move it here.
-firewall_ceph_ports_absent: []
