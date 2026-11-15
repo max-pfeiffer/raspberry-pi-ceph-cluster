@@ -1,0 +1,4 @@
+---
+- name: Reboot to apply firmware and boot configuration
+  ansible.builtin.reboot:
+    reboot_timeout: 600

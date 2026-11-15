@@ -1,0 +1,25 @@
+---
+# Renders the cephadm service specs into build/specs/ without touching the
+# cluster, to review them or to validate the templates (`make test`).
+- name: Render service specs
+  hosts: ceph_bootstrap
+  gather_facts: false
+  vars:
+    render_dir: "{{ playbook_dir }}/../build"
+  vars_files:
+    - ../roles/ceph_cluster/defaults/main.yml
+  tasks:
+    - name: Create output directory
+      ansible.builtin.file:
+        path: "{{ render_dir }}/specs"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+
+    - name: Render service spec
+      ansible.builtin.template:
+        src: "../roles/ceph_cluster/templates/{{ item }}.j2"
+        dest: "{{ render_dir }}/specs/{{ item }}"
+        mode: "0600"
+      loop: [cluster.yml, cephfs.yml]
+      delegate_to: localhost

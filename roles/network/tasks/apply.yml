@@ -1,0 +1,13 @@
+---
+- name: Apply netplan
+  ansible.builtin.shell: netplan generate && netplan apply
+  changed_when: true
+
+- name: Wait for the node to be reachable again
+  ansible.builtin.wait_for_connection:
+    timeout: 120
+
+- name: Clear the pending netplan apply
+  ansible.builtin.file:
+    path: "{{ network_apply_marker }}"
+    state: absent
