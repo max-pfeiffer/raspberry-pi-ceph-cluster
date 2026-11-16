@@ -58,7 +58,7 @@ ansible.cfg, Makefile           Entry points (`make help`)
 inventory/
   hosts.yml                     Nodes, IPs, preferred admin/bootstrap node
   group_vars/all/main.yml       Networks, admin user, timezone
-  group_vars/all/vault.yml      Secrets, encrypted with ansible-vault (you create it)
+  group_vars/all/vault.yml      Secrets, encrypted with ansible-vault (you create it, git-ignored)
   group_vars/ceph/main.yml      Ceph version + checksums, OSD disk model, placement labels
   host_vars/cephN.yml           Per node labels (ceph1: monitoring, ceph2/3: mds)
 playbooks/
@@ -100,9 +100,10 @@ Principles:
   moving to the next node. A node without pending changes is not gated, so `make site`
   also works on a degraded cluster. A cluster is only bootstrapped when no node runs
   Ceph daemons, so an empty (re-flashed) node never starts a second cluster.
-* **Secrets encrypted.** They're kept in `vault.yml` with ansible-vault; pre-commit and
-  `make lint` refuse a plain-text `vault.yml`. Rendered cloud-init files are written to
-  `build/`, which is git-ignored.
+* **Secrets encrypted and local.** They're kept in `vault.yml` with ansible-vault. The
+  file is git-ignored, so not even its ciphertext is published; should it be committed
+  anyway, pre-commit and `make lint` refuse a plain-text `vault.yml`. Rendered cloud-init
+  files and specs are written to `build/`, which is git-ignored.
 
 ## Setup
 
@@ -137,12 +138,23 @@ Dependabot proposes these updates monthly.
 
 ```shell
 cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
-$EDITOR inventory/group_vars/all/vault.yml        # set the dashboard password (≥ 12 chars)
-uv run ansible-vault encrypt inventory/group_vars/all/vault.yml
+uv run ansible-vault encrypt inventory/group_vars/all/vault.yml   # choose the vault password
+uv run ansible-vault edit inventory/group_vars/all/vault.yml      # set the dashboard password (≥ 12 chars)
 ```
 
-Commit the encrypted `vault.yml`. To avoid typing the vault password each time, put it in
-`.vault-pass` (git-ignored, `chmod 600`). The Makefile picks it up automatically.
+The file is encrypted before it holds a real secret and only ever edited with
+`ansible-vault edit`, so no secret is written to disk in plain text.
+
+Generate the vault password (e.g. 24+ random characters from a password manager) and
+store it there: it's the only protection of the file, and without it `vault.yml` can't
+be read. To avoid typing it each time, put it in `.vault-pass` (git-ignored) and run
+`chmod 600 .vault-pass`. The Makefile picks it up automatically.
+
+`vault.yml` is git-ignored. Don't commit it to a public repo: ansible-vault derives its
+key with a fast KDF, so published ciphertext can be brute-forced offline, and it can't
+be taken back once it's pushed. Back it up with the vault password in your password
+manager. If you want it versioned, do that in a private repo (`git add -f`); pre-commit
+and `make lint` then check that it's encrypted.
 
 `vault_ceph_grafana_password` is optional. If set, Grafana gets an admin user when it's
 first deployed; otherwise Grafana is read-only.

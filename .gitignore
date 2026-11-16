@@ -1,8 +1,9 @@
 # Rendered cloud-init files (contain SSH keys and host specifics)
 build/
 
-# Local secrets
+# Local secrets (vault.yml is encrypted, but its ciphertext stays out of the public repo)
 .vault-pass
+inventory/group_vars/all/vault.yml
 
 # Python / Ansible (recreated by `make deps`)
 .venv/

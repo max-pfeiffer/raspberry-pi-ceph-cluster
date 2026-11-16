@@ -23,11 +23,13 @@
     state: directory
     mode: "0700"
 
+# No diff: cluster.yml contains the Grafana admin password.
 - name: Render service specs
   ansible.builtin.template:
     src: "{{ item }}.j2"
     dest: "{{ ceph_specs_dir }}/{{ item }}"
     mode: "0600"
+  diff: false
   loop: [cluster.yml, cephfs.yml]
 
 - name: Apply cluster spec (hosts, mon, mgr, osd, monitoring)
