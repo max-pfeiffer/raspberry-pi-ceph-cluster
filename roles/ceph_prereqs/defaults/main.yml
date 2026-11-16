@@ -1,6 +1,11 @@
 ---
 cephadm_url: "https://download.ceph.com/rpm-{{ ceph_version }}/el9/noarch/cephadm"
 
+# Ubuntu releases that Ceph tests as a container host for the pinned ceph_version
+# (https://docs.ceph.com/en/latest/start/os-recommendations/). Review the list
+# when changing ceph_version to a new major release.
+ceph_prereqs_supported_ubuntu: ["22.04", "24.04"]
+
 ceph_prereq_packages:
   - podman
   - lvm2

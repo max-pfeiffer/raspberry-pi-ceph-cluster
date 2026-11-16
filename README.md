@@ -211,9 +211,14 @@ Each directory contains `user-data` (hostname, admin user `ansible`, your SSH ke
 
 ### 7. Flash Ubuntu onto the Transcend SSD
 
-Download the **Ubuntu Server 26.04 LTS** (or 24.04 LTS) *preinstalled server image
-for Raspberry Pi* (`ubuntu-…-preinstalled-server-arm64+raspi.img.xz`) from
+Download the **Ubuntu Server 24.04 LTS** *preinstalled server image for Raspberry Pi*
+(`ubuntu-24.04.…-preinstalled-server-arm64+raspi.img.xz`) from
 <https://ubuntu.com/download/raspberry-pi>, and verify its checksum.
+
+Use a release that Ceph tests as a container host for the pinned `ceph_version` (see the
+[OS recommendations](https://docs.ceph.com/en/latest/start/os-recommendations/)): for
+Ceph 21 that's 24.04 or 22.04, not 26.04. `make ceph-prereqs` refuses any other release;
+the list is `ceph_prereqs_supported_ubuntu` in `roles/ceph_prereqs/defaults/main.yml`.
 
 **Option A: on the Pi, still booted from the SD card (no extra hardware):**
 
@@ -233,7 +238,7 @@ confirmation, and verifies the image if you pass its SHA256 (from Ubuntu's `SHA2
 as the fourth argument.
 
 **Option B: on your Mac with a USB NVMe enclosure:** flash the image with
-Raspberry Pi Imager ("Use custom", **no** OS customisation), then copy `user-data`,
+[Raspberry Pi Imager](https://www.raspberrypi.com/software/) ("Use custom", **no** OS customisation), then copy `user-data`,
 `network-config` and `meta-data` from `build/cloud-init/<host>/` onto the `system-boot`
 volume and overwrite the existing files.
 

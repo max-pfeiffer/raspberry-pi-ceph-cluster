@@ -1,4 +1,15 @@
 ---
+- name: Ensure the Ubuntu release is a tested host for Ceph {{ ceph_version }}
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Ubuntu'
+      - ansible_facts.distribution_version in ceph_prereqs_supported_ubuntu
+    fail_msg: >-
+      {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }} is not a tested
+      container host for Ceph {{ ceph_version }} (tested: Ubuntu
+      {{ ceph_prereqs_supported_ubuntu | join(', ') }}). Re-flash the node with one of them, or
+      extend ceph_prereqs_supported_ubuntu if the Ceph OS recommendations list this release.
+
 - name: Install container runtime and Ceph prerequisites
   ansible.builtin.apt:
     name: "{{ ceph_prereq_packages }}"

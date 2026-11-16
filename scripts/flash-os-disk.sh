@@ -5,7 +5,7 @@
 # Run on Linux as root, e.g. on the Pi itself booted from an SD card.
 #
 # Usage: flash-os-disk.sh <ubuntu-...-raspi.img.xz> <target-disk> <cloud-init-dir> [image-sha256]
-#   e.g. flash-os-disk.sh ubuntu-26.04-preinstalled-server-arm64+raspi.img.xz \
+#   e.g. flash-os-disk.sh ubuntu-24.04.4-preinstalled-server-arm64+raspi.img.xz \
 #          /dev/disk/by-id/nvme-TS256GMTE110S_XXXX ./ceph1 <sha256 from SHA256SUMS>
 #
 # Refuses a Kingston disk (the Ceph OSD disk). Override the patterns with
