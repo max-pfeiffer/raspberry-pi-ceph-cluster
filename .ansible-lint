@@ -10,6 +10,8 @@ exclude_paths:
   - .idea/
   - playbooks/templates/
   - roles/*/templates/
+  # Encrypted with ansible-vault: not YAML on disk, and the linter has no vault password.
+  - inventory/group_vars/all/vault.yml
 skip_list:
   # Variables like ceph_version or cephadm_path are deliberately shared between roles.
   - var-naming[no-role-prefix]

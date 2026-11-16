@@ -21,3 +21,4 @@ ignore: |
   collections/
   build/
   .idea/
+  inventory/group_vars/all/vault.yml

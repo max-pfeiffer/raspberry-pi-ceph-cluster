@@ -2,10 +2,10 @@
 # --- Ceph release -----------------------------------------------------------
 # Pin an exact release. To upgrade, print the values for a new release with
 # `scripts/ceph-release-pins.sh <version>`, update all three, then run `make upgrade`.
-ceph_version: "20.2.0"
-cephadm_sha256: "ed5a13ad26f7f55dd30e9b63855e4e581fd86973bec1d21a12ed0bb26af19c8b"
+ceph_version: "21.2.0"
+cephadm_sha256: "f494ef67601f5888d72dd26b4f8cc941cc86deac69300e8b81607878d051b516"
 # Multi-arch image index digest of quay.io/ceph/ceph:v{{ ceph_version }}.
-ceph_image_digest: "sha256:1228c3d05e45fbc068a8c33614e4409b6dac688bcc77369b06009b5830fa8d86"
+ceph_image_digest: "sha256:c9e6ed4ac3fcf67b28f38358bb9619dee4d1dfb96ddd4b9b583eee316a15f04d"
 ceph_image: "quay.io/ceph/ceph@{{ ceph_image_digest }}"
 
 # --- Tooling ----------------------------------------------------------------
