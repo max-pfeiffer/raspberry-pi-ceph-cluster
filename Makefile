@@ -19,7 +19,7 @@ VENV_MARKER        := .venv/.synced
 COLLECTIONS_MARKER := collections/.installed
 DEPS               := $(VENV_MARKER) $(COLLECTIONS_MARKER)
 
-.PHONY: help deps hooks lint test check-pins check clean cloud-init specs ping site firmware base network ceph-prereqs ceph upgrade reboot
+.PHONY: help deps hooks lint test check-pins check clean cloud-init cloud-init-copy specs ping site firmware base network ceph-prereqs ceph upgrade reboot
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -95,6 +95,14 @@ check: $(DEPS) ## Dry run of the complete setup on an installed cluster, showing
 
 cloud-init: $(DEPS) ## Render cloud-init files into build/cloud-init/<host>/
 	$(PLAYBOOK) playbooks/render-cloud-init.yml
+
+# The boot partition of a disk flashed on macOS, e.g. make cloud-init-copy HOST=ceph1
+BOOT_VOLUME ?= /Volumes/system-boot
+
+cloud-init-copy: $(DEPS) ## Render the cloud-init files, copy those of HOST=<node> onto a freshly flashed disk and eject it (macOS)
+	@[ -n "$(HOST)" ] || { echo "Usage: make cloud-init-copy HOST=ceph1" >&2; exit 1; }
+	$(PLAYBOOK) playbooks/render-cloud-init.yml
+	scripts/copy-cloud-init.sh build/cloud-init/$(HOST) $(BOOT_VOLUME)
 
 specs: $(DEPS) ## Render the cephadm service specs into build/specs/ for review
 	$(PLAYBOOK) playbooks/render-specs.yml

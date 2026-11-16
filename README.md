@@ -77,6 +77,7 @@ roles/                          rpi_firmware, base, network, ceph_prereqs, ceph_
                                 ceph_maintenance (health gating, rolling reboots)
 roles/ceph_cluster/templates/   cephadm service specs (cluster.yml, cephfs.yml)
 scripts/flash-os-disk.sh        Writes Ubuntu + cloud-init onto the OS disk
+scripts/copy-cloud-init.sh      Copies cloud-init onto a disk flashed on macOS (`make cloud-init-copy`)
 scripts/ceph-release-pins.sh    Prints the version pins for a Ceph release
 scripts/check-vault-encrypted.sh  Fails on a plain-text vault.yml (pre-commit, `make lint`)
 tests/                          Template rendering for `make test`, CI integration test
@@ -238,9 +239,15 @@ confirmation, and verifies the image if you pass its SHA256 (from Ubuntu's `SHA2
 as the fourth argument.
 
 **Option B: on your Mac with a USB NVMe enclosure:** flash the image with
-[Raspberry Pi Imager](https://www.raspberrypi.com/software/) ("Use custom", **no** OS customisation), then copy `user-data`,
-`network-config` and `meta-data` from `build/cloud-init/<host>/` onto the `system-boot`
-volume and overwrite the existing files.
+[Raspberry Pi Imager](https://www.raspberrypi.com/software/) ("Use custom", **no** OS customisation). The Imager ejects
+the disk when it's done, so unplug and replug the enclosure. Then run:
+
+```shell
+make cloud-init-copy HOST=ceph1
+```
+
+It renders the cloud-init files, overwrites `user-data`, `network-config` and `meta-data`
+on the `system-boot` volume with those from `build/cloud-init/ceph1/`, and ejects the disk.
 
 Remove the SD card and power on. cloud-init sets up the node on first boot, which
 takes a few minutes because it upgrades packages. Repeat for all three Pis.
