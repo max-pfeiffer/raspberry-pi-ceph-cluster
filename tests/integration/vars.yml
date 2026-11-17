@@ -12,8 +12,10 @@ ceph_mds_count: 1
 # The OSD is a logical volume on a loop device (created by run.sh), so there
 # is no disk to select by model.
 ceph_prereqs_check_osd_disk: false
-ceph_osd_data_devices:
-  paths: [/dev/ci-osd/data]
+ceph_osd_services:
+  - service_id: nvme
+    data_devices:
+      paths: [/dev/ci-osd/data]
 
 # One OSD can't hold three replicas.
 ceph_config_extra:

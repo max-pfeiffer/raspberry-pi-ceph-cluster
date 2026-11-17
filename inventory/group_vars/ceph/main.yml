@@ -17,12 +17,19 @@ ceph_dashboard_user: admin
 ceph_dashboard_password: "{{ vault_ceph_dashboard_password }}"
 
 # --- OSDs -------------------------------------------------------------------
-# Only disks with exactly this model string become OSDs (Kingston NV3 1 TB).
-# Verify with `lsblk -d -o NAME,MODEL` or `ceph orch device ls`.
-ceph_osd_device_model: "KINGSTON SNV3S1000G"
-# Device selection of the OSD service spec (`data_devices`).
-ceph_osd_data_devices:
-  model: "{{ ceph_osd_device_model }}"
+# One cephadm OSD service per disk model, so nodes can use SSDs from different
+# vendors. An empty disk becomes an OSD when its model contains `model`
+# (case-sensitive substring, as cephadm matches it). Each node must have exactly
+# one matching disk. Find the model with `lsblk -d -o NAME,MODEL` or
+# `ceph orch device ls`. Don't change the service_id of a service that already
+# has OSDs; add an entry for a new model instead, e.g.:
+#   - service_id: nvme-samsung
+#     data_devices:
+#       model: "Samsung SSD 990 PRO 1TB"
+ceph_osd_services:
+  - service_id: nvme
+    data_devices:
+      model: "KINGSTON SNV3S1000G"   # Kingston NV3 1 TB
 
 # --- Placement labels -------------------------------------------------------
 # All nodes are admin nodes (hold ceph.conf + admin keyring) and run MON, MGR and

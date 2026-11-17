@@ -37,21 +37,27 @@
   when: _image.rc != 0
   changed_when: true
 
+# Same rule as cephadm's `model` filter: the disk's model contains one of the
+# configured strings (case-sensitive).
 - name: Find OSD devices
   ansible.builtin.set_fact:
     _osd_devices: >-
-      {{ ansible_facts.devices | dict2items
-         | selectattr('value.model', 'defined')
-         | selectattr('value.model', 'equalto', ceph_osd_device_model)
-         | map(attribute='key') | list }}
+      {%- set ns = namespace(found=[]) -%}
+      {%- for dev, info in ansible_facts.devices.items() if info.model | default(none) -%}
+      {%- if ceph_prereqs_osd_models | select('in', info.model) | list -%}
+      {%- set ns.found = ns.found + [dev] -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ ns.found }}
   when: ceph_prereqs_check_osd_disk | bool
 
 - name: Ensure exactly one OSD device was found
   ansible.builtin.assert:
     that: _osd_devices | length == 1
     fail_msg: >-
-      Expected one disk with model '{{ ceph_osd_device_model }}', found {{ _osd_devices }}.
-      Check the model string with `lsblk -d -o NAME,MODEL` and update ceph_osd_device_model.
+      Expected one disk whose model contains one of {{ ceph_prereqs_osd_models }},
+      found {{ _osd_devices }}. Check the model with `lsblk -d -o NAME,MODEL` and
+      add it to ceph_osd_services.
   when: ceph_prereqs_check_osd_disk | bool
 
 - name: Ensure the OSD device is not the root disk

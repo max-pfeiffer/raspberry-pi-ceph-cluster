@@ -11,12 +11,15 @@ ceph_prereq_packages:
   - lvm2
   - python3
 
-# Verify that exactly one disk matches ceph_osd_device_model and that it isn't
-# the root disk. Only disabled by the CI integration test, whose OSD is a
-# logical volume.
+# Verify that exactly one disk matches the models in ceph_osd_services and that
+# it isn't the root disk. Only disabled by the CI integration test, whose OSD is
+# a logical volume.
 ceph_prereqs_check_osd_disk: true
+ceph_prereqs_osd_models: >-
+  {{ ceph_osd_services | map(attribute='data_devices')
+     | selectattr('model', 'defined') | map(attribute='model') | list }}
 
-# DANGER: when true, OSD disks (matched by ceph_osd_device_model) are wiped.
+# DANGER: when true, OSD disks (matched by ceph_prereqs_osd_models) are wiped.
 # Refused on nodes that run Ceph daemons or have a ceph.conf.
 wipe_osd_disks: false
 # DANGER: also wipe a disk that holds Ceph OSD data (LVM volume group "ceph-*").

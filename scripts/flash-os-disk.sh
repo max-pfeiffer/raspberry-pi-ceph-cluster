@@ -8,12 +8,13 @@
 #   e.g. flash-os-disk.sh ubuntu-24.04.4-preinstalled-server-arm64+raspi.img.xz \
 #          /dev/disk/by-id/nvme-TS256GMTE110S_XXXX ./ceph1 <sha256 from SHA256SUMS>
 #
-# Refuses a Kingston disk (the Ceph OSD disk). Override the patterns with
+# Refuses a disk that holds Ceph OSD data, from any vendor, and a Kingston disk
+# (the empty OSD disk of a new node). Override the patterns with
 # OSD_DISK_MODEL / OS_DISK_MODEL if your hardware differs.
 set -euo pipefail
 
 if [[ $# -lt 3 || $# -gt 4 ]]; then
-  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 fi
 
@@ -48,6 +49,27 @@ if [[ $model == *"$osd_disk_model"* ]]; then
 fi
 if [[ $model != *"$os_disk_model"* ]]; then
   echo "WARNING: $target ($model) does not look like the OS disk (expected a model containing '$os_disk_model')." >&2
+fi
+
+# cephadm OSDs are LVM volume groups named ceph-*; raw-mode OSDs carry a
+# ceph_bluestore signature. Without lvm2 (e.g. Raspberry Pi OS Lite) the volume
+# group names can't be read, so any LVM data is refused.
+fstypes=$(lsblk -nro FSTYPE "$target")
+if grep -qx ceph_bluestore <<<"$fstypes"; then
+  echo "Refusing to flash $target ($model): it holds a Ceph BlueStore OSD." >&2
+  exit 1
+fi
+if grep -qx LVM2_member <<<"$fstypes"; then
+  ceph_vgs=""
+  if command -v pvs >/dev/null; then
+    ceph_vgs=$(pvs --noheadings -o pv_name,vg_name 2>/dev/null \
+      | awk -v dev="$target" 'index($1, dev) == 1 && $2 ~ /^ceph-/ { print $2 }' || true)
+  fi
+  if [[ -n $ceph_vgs ]] || ! command -v pvs >/dev/null; then
+    echo "Refusing to flash $target ($model): it holds LVM data${ceph_vgs:+ of Ceph OSDs ($ceph_vgs)}." >&2
+    echo "It may be a live OSD of the cluster. If you're sure it isn't, wipe it first: sudo wipefs --all $target" >&2
+    exit 1
+  fi
 fi
 
 if [[ -n $image_sha256 ]]; then

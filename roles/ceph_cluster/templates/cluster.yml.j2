@@ -19,13 +19,15 @@ placement:
 service_type: crash
 placement:
   host_pattern: "*"
+{% for osd in ceph_osd_services %}
 ---
 service_type: osd
-service_id: nvme
+service_id: {{ osd.service_id }}
 placement:
   label: osd
 spec:
-  data_devices: {{ ceph_osd_data_devices | to_json }}
+  data_devices: {{ osd.data_devices | to_json }}
+{% endfor %}
 {% if ceph_monitoring_enabled %}
 ---
 service_type: node-exporter

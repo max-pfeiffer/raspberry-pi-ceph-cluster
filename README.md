@@ -59,7 +59,7 @@ inventory/
   hosts.yml                     Nodes, IPs, preferred admin/bootstrap node
   group_vars/all/main.yml       Networks, admin user, timezone
   group_vars/all/vault.yml      Secrets, encrypted with ansible-vault (you create it, git-ignored)
-  group_vars/ceph/main.yml      Ceph version + checksums, OSD disk model, placement labels
+  group_vars/ceph/main.yml      Ceph version + checksums, OSD disk models, placement labels
   host_vars/cephN.yml           Per node labels (ceph1: monitoring, ceph2/3: mds)
 playbooks/
   render-cloud-init.yml         Renders first-boot files into build/cloud-init/<host>/
@@ -163,7 +163,15 @@ first deployed; otherwise Grafana is read-only.
 ### 3. Review the inventory
 
 Check `inventory/hosts.yml` and `inventory/group_vars/`, in particular `public_network`,
-`ceph_version` and `ceph_osd_device_model`.
+`ceph_version` and `ceph_osd_services`.
+
+**OSD disks from other vendors:** each entry in `ceph_osd_services` becomes one cephadm
+OSD service that picks up empty disks whose model contains its `model` string
+(case-sensitive). The nodes can use different SSDs: add one entry per model, e.g.
+Kingston on ceph1 and ceph2, Samsung on ceph3. Every node must have exactly one
+matching disk, which `make ceph-prereqs` checks. Keep the `service_id` of entries that
+already have OSDs; renaming one creates a new service, and the old one has to be removed
+by hand.
 
 ### 4. Assemble the hardware
 
@@ -199,7 +207,7 @@ that can't be automated, because no OS is installed yet.
    finds the NVMe behind the HAT without it. After you save, run `sudo reboot` to apply
    the change.
 3. Check that both SSDs are visible: `lsblk -d -o NAME,MODEL,SIZE`. Note the model string
-   of the Kingston drive. It must match `ceph_osd_device_model`.
+   of the OSD drive (the Kingston). It must be listed in `ceph_osd_services`.
 
 From now on, `playbooks/00-firmware.yml` enforces these settings, so any drift gets
 corrected.
@@ -231,13 +239,15 @@ the list is `ceph_prereqs_supported_ubuntu` in `roles/ceph_prereqs/defaults/main
 scp ubuntu-*-raspi.img.xz scripts/flash-os-disk.sh pi@<pi-ip>:
 scp -r build/cloud-init/ceph1 pi@<pi-ip>:
 
-# on the Pi: identify the Transcend disk (NOT the Kingston!)
+# on the Pi: identify the Transcend disk (NOT the OSD disk!)
 ls -l /dev/disk/by-id/ | grep nvme
 sudo ./flash-os-disk.sh ubuntu-*-raspi.img.xz /dev/disk/by-id/nvme-<Transcend…> ./ceph1 <sha256>
 sudo poweroff
 ```
 
-The script refuses to overwrite the running system's disk or a Kingston disk, asks for
+The script refuses to overwrite the running system's disk, a disk that holds Ceph OSD
+data (from any vendor), or a Kingston disk, which protects the still empty OSD disk of a
+new node (set `OSD_DISK_MODEL` for an OSD disk from another vendor). It asks for
 confirmation, and verifies the image if you pass its SHA256 (from Ubuntu's `SHA256SUMS`)
 as the fourth argument.
 
@@ -277,7 +287,7 @@ Or run it step by step:
 make firmware        # may reboot nodes, one at a time
 make base
 make network         # re-applies netplan; the node keeps its IP
-make ceph-prereqs ANSIBLE_ARGS="-e wipe_osd_disks=true"   # wipes the Kingston SSDs (first install only)
+make ceph-prereqs ANSIBLE_ARGS="-e wipe_osd_disks=true"   # wipes the OSD SSDs (first install only)
 make ceph
 ```
 
@@ -294,9 +304,9 @@ not gated. If the cluster has a known, harmless warning, add its check name to
 pending changes stops after about 30 minutes of waiting. A change that couldn't be
 applied is remembered on the node and applied by the next run.
 
-Use `wipe_osd_disks=true` only if the Kingston disks have old partitions. Without it,
+Use `wipe_osd_disks=true` only if the OSD disks have old partitions. Without it,
 cephadm ignores disks that aren't empty. The wipe only selects disks whose model matches
-`ceph_osd_device_model`, never touches the root disk, and is refused on a node that runs
+one in `ceph_osd_services`, never touches the root disk, and is refused on a node that runs
 Ceph daemons or has a `ceph.conf`. A disk that holds Ceph OSD data (for example from an
 earlier cluster) additionally needs `-e wipe_osd_disks_force=true`. Never use that on a
 re-flashed node of a cluster that still exists: its disk is a live OSD (see "Replace a
@@ -365,7 +375,7 @@ or `ceph_filesystems` in the inventory.
 | Reboot a single node        | `make reboot ANSIBLE_ARGS="--limit ceph2"`                                                            |
 | Reboot after kernel updates | `make reboot`: requires a healthy cluster, sets `noout`, asks the orchestrator whether each node is safe to stop, reboots one node at a time, waits for recovery, always unsets `noout` |
 | Replace a failed OSD        | `ceph orch osd rm <id> --replace --zap`, swap disk; the OSD spec redeploys it                        |
-| Replace a node (new OS disk) | Flash it as in steps 6 to 8, run `make site` **without** `wipe_osd_disks`. The node rejoins the existing cluster. If its Kingston disk still holds the OSD, bring it back with `ceph cephadm osd activate <host>` |
+| Replace a node (new OS disk) | Flash it as in steps 6 to 8, run `make site` **without** `wipe_osd_disks`. The node rejoins the existing cluster. If its OSD disk still holds the OSD, bring it back with `ceph cephadm osd activate <host>` |
 | Check memory headroom       | `ceph orch ps` (column `MEM USE`) and `free -h` on each node, after a few days of real load           |
 | Dry run of all changes      | `make check` (`--check --diff`, changes nothing; reads the live cluster state, so it needs an installed cluster) |
 | Lint and test               | `make lint` (yamllint, ansible-lint, shellcheck, actionlint, vault check) and `make test` (syntax check; renders cloud-init files, netplan and specs with dummy secrets and validates them; needs no vault password); CI runs both |
@@ -398,6 +408,9 @@ reboots, upgrades, or anything that needs more than one node.
   switch (~450 MB/s total). Forcing Gen3 brings no benefit with this HAT.
 * **Kingston NV3** is a DRAM-less consumer SSD without power-loss protection. It's fine
   for a homelab, but sync-write latency (e.g. databases on RBD) will be modest.
+* **Mixed OSD disks:** with `size=3` on three hosts every object has a copy on every
+  node, so usable capacity is set by the smallest OSD, and the slowest SSD sets write
+  latency. Mix vendors freely, but keep capacities equal.
 * **USB NIC:** the 2.5 GbE adapter is each node's only network link. It's matched by
   the name pattern `enx*` (Ubuntu's name for USB NICs), so don't plug a second USB network
   adapter into a node; the `network` role refuses to continue if more than one matches.
