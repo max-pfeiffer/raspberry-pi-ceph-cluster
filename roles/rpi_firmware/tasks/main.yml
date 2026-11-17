@@ -12,6 +12,7 @@
   ansible.builtin.blockinfile:
     path: "{{ rpi_config_txt }}"
     marker: "# {mark} ANSIBLE MANAGED BLOCK (rpi_firmware)"
+    state: "{{ 'present' if rpi_config_txt_lines else 'absent' }}"
     insertafter: EOF
     block: |
       [all]

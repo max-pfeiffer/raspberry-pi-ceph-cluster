@@ -66,7 +66,7 @@ playbooks/
   render-specs.yml              Renders the cephadm service specs into build/specs/ for review
   site.yml                      Runs 00 → 40 in order
   select-admin.yml              Checks all nodes for an existing cluster, picks the node for cluster-wide commands
-  00-firmware.yml               EEPROM boot order, PCIe in config.txt (one node at a time, reboots health-gated)
+  00-firmware.yml               EEPROM boot order, optional config.txt lines (one node at a time, reboots health-gated)
   10-base.yml                   Hostname, /etc/hosts, chrony, packages, firewall, unattended-upgrades
   20-network.yml                Netplan for the 2.5 GbE adapter (one node at a time, changes health-gated)
   30-ceph-prereqs.yml           Podman, pinned cephadm, image pre-pull, optional OSD disk wipe
@@ -168,7 +168,8 @@ Check `inventory/hosts.yml` and `inventory/group_vars/`, in particular `public_n
 ### 4. Assemble the hardware
 
 1. Mount the HAT and both SSDs, attach the Active Cooler, plug the 2.5 GbE adapter into a
-   **blue USB 3** port.
+   **blue USB 3** port. Put the Transcend (OS disk) in the HAT's **NVME1** slot: the
+   bootloader tries NVME1 first, and Waveshare recommends it for the boot disk.
 2. Connect the 2.5 GbE adapter to the 2.5 GbE switch on the 192.168.30.0/24 network.
    The onboard `eth0` port stays unused once Ubuntu is installed.
 
@@ -189,12 +190,14 @@ that can't be automated, because no OS is installed yet.
    Set or add:
 
    ```
-   BOOT_ORDER=0xf416
-   PCIE_PROBE=1
+   BOOT_ORDER=0xf461
    ```
 
-   `0xf416` tries NVMe first, then SD, then USB. `PCIE_PROBE=1` is required for M.2
-   adapters without a HAT+ EEPROM. After you save, run `sudo reboot` to apply the change.
+   `0xf461` is read right to left: SD first, then NVMe, then USB. Without an SD card
+   the Pi boots from NVMe. To recover a node, insert a Pi OS SD card and power on;
+   don't leave a card in otherwise. `PCIE_PROBE=1` isn't needed: the updated bootloader
+   finds the NVMe behind the HAT without it. After you save, run `sudo reboot` to apply
+   the change.
 3. Check that both SSDs are visible: `lsblk -d -o NAME,MODEL,SIZE`. Note the model string
    of the Kingston drive. It must match `ceph_osd_device_model`.
 
@@ -277,6 +280,11 @@ make network         # re-applies netplan; the node keeps its IP
 make ceph-prereqs ANSIBLE_ARGS="-e wipe_osd_disks=true"   # wipes the Kingston SSDs (first install only)
 make ceph
 ```
+
+On a first install, `make firmware` only verifies step 5: the EEPROM settings are
+already in place, so it reports no change and doesn't reboot. If it does report a
+change, step 5 wasn't completed on that node. Later runs correct any drift, e.g. after
+an EEPROM update or on a replacement Pi.
 
 Once the cluster exists, `make firmware` and `make network` gate their disruptive step
 (the reboot, `netplan apply`) on cluster health: no health checks and all placement

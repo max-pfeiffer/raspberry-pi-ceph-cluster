@@ -1,19 +1,18 @@
 ---
 rpi_config_txt: /boot/firmware/config.txt
 
-# Lines appended to config.txt under [all].
-# The Waveshare HAT (B) is not HAT+ compliant, so PCIe must be enabled explicitly.
-# Its ASM1182e switch is PCIe Gen2, so forcing Gen3 brings no benefit.
-rpi_config_txt_lines:
-  - dtparam=pciex1
+# Lines appended to config.txt under [all]. Empty removes the managed block.
+# dtparam=pciex1 isn't needed: the firmware enables PCIe itself when it boots from
+# NVMe. The HAT's ASM1182e switch is PCIe Gen2, so forcing Gen3 brings no benefit.
+rpi_config_txt_lines: []
 
 # Bootloader EEPROM settings that must be present.
-# BOOT_ORDER 0xf416: NVMe, then SD, then USB, repeat. PCIE_PROBE=1 is needed for
-# NVMe boot through adapters without a HAT+ EEPROM.
+# BOOT_ORDER 0xf461 (read right to left): SD, then NVMe, then USB, repeat. Without
+# an SD card the Pi boots from NVMe; inserting one boots it instead, for recovery.
+# PCIE_PROBE isn't needed: current bootloaders find the NVMe behind the HAT without it.
 rpi_manage_eeprom: true
 rpi_eeprom_config:
-  BOOT_ORDER: "0xf416"
-  PCIE_PROBE: "1"
+  BOOT_ORDER: "0xf461"
 
 # Exists while a change waits for a reboot (on tmpfs, so a reboot clears it).
 rpi_reboot_marker: /run/rpi-firmware-reboot-required
