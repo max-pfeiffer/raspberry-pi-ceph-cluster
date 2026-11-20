@@ -40,7 +40,7 @@ no separate cluster (replication) network.
 * 3 MONs (one per node, quorum survives one node failure), 2 MGRs (active/standby)
 * 3 OSDs, one per node, CRUSH failure domain `host`
 * Replicated pools with `size=3`, `min_size=2`. There are too few hosts for erasure coding.
-* Capacity: about 3 TB raw, about 1 TB usable; plan for about 800 GB because of the 85 % nearfull limit
+* Capacity: about 2.7 TiB raw (3 × 1 TB), about 0.9 TiB usable; plan for about 780 GiB because of the 85 % nearfull limit
 * CephFS `cephfs` with 2 MDS (active + standby) on `ceph2` and `ceph3`, and an RBD pool `rbd`
 * Monitoring stack (Prometheus with 7 days retention, Grafana, Alertmanager) only on
   `ceph1`, node-exporter everywhere
@@ -57,7 +57,7 @@ no separate cluster (replication) network.
 ansible.cfg, Makefile           Entry points (`make help`)
 inventory/
   hosts.yml                     Nodes, IPs, preferred admin/bootstrap node
-  group_vars/all/main.yml       Networks, admin user, timezone
+  group_vars/all/main.yml       Networks, firewall, admin user, timezone
   group_vars/all/vault.yml      Secrets, encrypted with ansible-vault (you create it, git-ignored)
   group_vars/ceph/main.yml      Ceph version + checksums, OSD disk models, placement labels
   host_vars/cephN.yml           Per node labels (ceph1: monitoring, ceph2/3: mds)
@@ -100,7 +100,9 @@ Principles:
   is reconfigured they wait for a healthy cluster, and wait again for recovery before
   moving to the next node. A node without pending changes is not gated, so `make site`
   also works on a degraded cluster. A cluster is only bootstrapped when no node runs
-  Ceph daemons, so an empty (re-flashed) node never starts a second cluster.
+  Ceph daemons, so an empty (re-flashed) node never starts a second cluster. This needs
+  at least one node that still runs the cluster: if all nodes are re-flashed, the old
+  cluster is gone and a new one is bootstrapped (see step 9 for its OSD disks).
 * **Secrets encrypted and local.** They're kept in `vault.yml` with ansible-vault. The
   file is git-ignored, so not even its ciphertext is published; should it be committed
   anyway, pre-commit and `make lint` refuse a plain-text `vault.yml`. Rendered cloud-init
@@ -163,7 +165,13 @@ first deployed; otherwise Grafana is read-only.
 ### 3. Review the inventory
 
 Check `inventory/hosts.yml` and `inventory/group_vars/`, in particular `public_network`,
-`ceph_version` and `ceph_osd_services`.
+`firewall_allowed_networks`, `ceph_version` and `ceph_osd_services`.
+
+**Workstation access:** the firewall only lets the networks in `firewall_allowed_networks`
+(`inventory/group_vars/all/main.yml`) reach the dashboard, Grafana and the other Ceph
+ports; SSH is open to all. If your workstation isn't on `public_network`, add its network
+to the list, e.g. `192.168.1.0/24`. The list replaces the role default, so keep
+`"{{ public_network }}"` in it, or the nodes can't reach each other.
 
 **OSD disks from other vendors:** each entry in `ceph_osd_services` becomes one cephadm
 OSD service that picks up empty disks whose model contains its `model` string
@@ -279,6 +287,8 @@ Run everything at once:
 
 ```shell
 make site
+# first install on OSD disks that aren't empty (see below):
+make site ANSIBLE_ARGS="-e wipe_osd_disks=true"
 ```
 
 Or run it step by step:
@@ -305,10 +315,13 @@ pending changes stops after about 30 minutes of waiting. A change that couldn't 
 applied is remembered on the node and applied by the next run.
 
 Use `wipe_osd_disks=true` only if the OSD disks have old partitions. Without it,
-cephadm ignores disks that aren't empty. The wipe only selects disks whose model matches
+cephadm ignores disks that aren't empty: the cluster is bootstrapped without OSDs, and
+`make site` fails after 20 minutes at "Wait for all OSDs to be up" (see
+Troubleshooting). The wipe only selects disks whose model matches
 one in `ceph_osd_services`, never touches the root disk, and is refused on a node that runs
-Ceph daemons or has a `ceph.conf`. A disk that holds Ceph OSD data (for example from an
-earlier cluster) additionally needs `-e wipe_osd_disks_force=true`. Never use that on a
+Ceph daemons or has a `ceph.conf`, so it only works before the first bootstrap. A disk
+that holds Ceph OSD data (for example after re-flashing all nodes of an earlier cluster)
+additionally needs `-e wipe_osd_disks_force=true`. Never use that on a
 re-flashed node of a cluster that still exists: its disk is a live OSD (see "Replace a
 node" under Day-2 operations).
 
@@ -331,8 +344,12 @@ sudo cephadm shell -- ceph orch ps       # all daemons and where they run
 sudo cephadm shell -- ceph fs status
 ```
 
-* Dashboard: <https://ceph1.internal:8443> (user `admin`, password from the vault)
+* Dashboard: <https://ceph1.internal:8443> (user `admin`, password from the vault). It
+  runs on the active MGR; after a failover, `ceph mgr services` shows its current URL.
 * Grafana: <https://ceph1.internal:3000>
+
+Both use self-signed certificates, so the browser shows a warning. They're only
+reachable from the networks in `firewall_allowed_networks` (step 3).
 
 Run `make site` a second time. It should finish with `changed=0` on all hosts.
 
@@ -367,7 +384,7 @@ or `ceph_filesystems` in the inventory.
 | Task                        | How                                                                                                  |
 |-----------------------------|------------------------------------------------------------------------------------------------------|
 | Change configuration        | Edit the inventory / role defaults, run `make site`                                                  |
-| Remove something            | Delete it from the repo, then remove it on the cluster by hand: `ceph config rm <who> <option>` for a config option, `ceph orch rm <service>` for a service (e.g. the monitoring stack after setting `ceph_monitoring_enabled: false`) |
+| Remove something            | Delete it from the repo, then remove it on the cluster by hand: `ceph config rm <who> <option>` for a config option, `ceph orch rm <service>` for a service (e.g. the monitoring stack after setting `ceph_monitoring_enabled: false`), `sudo ufw delete allow proto tcp from <network> to any` on every node for a network removed from `firewall_allowed_networks` |
 | Change the dashboard password | In the dashboard, or `ceph dashboard ac-user-set-password admin -i <file>`. The vault value is only used at bootstrap |
 | Review the service specs    | `make specs` renders them into `build/specs/` without touching the cluster                           |
 | Preview a spec change       | `sudo cephadm shell --mount /etc/ceph/specs:/specs -- ceph orch apply -i /specs/cluster.yml --dry-run` |
@@ -402,6 +419,22 @@ Two workflows run on every push to `main` and every pull request:
 CI can't cover the Raspberry Pi firmware, the netplan change on the USB adapter,
 reboots, upgrades, or anything that needs more than one node.
 
+## Troubleshooting
+
+Run the `ceph` commands in `sudo cephadm shell` on any node.
+
+| Symptom | Cause and fix |
+|---------|---------------|
+| `make site` fails at "Wait for all OSDs to be up", `ceph osd stat` shows `num_osds: 0` | The OSD disks aren't empty. `ceph orch device ls --wide` shows why under REJECT REASONS, e.g. `LVM detected` or `Has a FileSystem`. `sudo lvs -o lv_name,lv_tags` on a node shows whether the disk holds an OSD and of which cluster (`ceph.cluster_fsid`). If that cluster no longer exists, zap the disks through the orchestrator (destroys their data): `ceph orch device zap <host> /dev/nvme0n1 --force` for each node. The OSD spec creates the OSDs within a few minutes; then rerun `make site`. `wipe_osd_disks` doesn't help here, because it's refused once a cluster exists |
+| An OSD disk is missing from `ceph orch device ls` | Its model doesn't match `ceph_osd_services`, or the HAT doesn't detect it: check `lsblk -d -o NAME,MODEL,SIZE` on the node |
+| Dashboard or Grafana don't load, SSH works | The firewall: your workstation's network isn't in `firewall_allowed_networks` (step 3). Check with `sudo ufw status` on the node and `nc -z ceph1.internal 8443` on the workstation |
+| Dashboard doesn't load, port is open | The MGR failed over and the dashboard moved to another node: `ceph mgr services` shows the current URL |
+| `HEALTH_WARN` with `MON_CLOCK_SKEW` | chrony isn't synced: `chronyc tracking` on each node; the nodes need outbound NTP |
+| `make firmware`, `make network` or `make reboot` wait for 30 minutes and fail | The cluster isn't healthy, or not all placement groups are `active+clean`. Check `ceph health detail`. For a known, harmless warning, add its check name to `ceph_health_allowed_checks` |
+| `make site` stops at "Refuse to continue on a half-bootstrapped node" | A failed bootstrap left a partial cluster. Follow the cleanup commands in the error message, then rerun. For the bootstrap output, rerun with `ANSIBLE_ARGS="-e ceph_debug=true"` |
+| SSH fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` | The node was re-flashed and has new host keys: run the commands in step 8 |
+| A node is unreachable after `make network` | Netplan didn't come up on the USB adapter. Log in through a keyboard and micro-HDMI console and check `ip link` and `netplan get` |
+
 ## Notes and pitfalls
 
 * **PCIe bandwidth:** both SSDs share one PCIe Gen2 x1 link through the HAT's ASM1182e
@@ -424,8 +457,10 @@ reboots, upgrades, or anything that needs more than one node.
   (swapping Ceph daemons hurts more than it helps).
 * **Alerts go nowhere by default.** Alertmanager only shows them in its UI and the
   dashboard. Set `ceph_alertmanager_webhook_urls` to get notified.
-* **Firewall:** nodes accept TCP from `public_network` on every port and SSH from
-  anywhere; everything else is denied. The network is the trust boundary.
+* **Firewall:** nodes accept TCP on every port from the networks in
+  `firewall_allowed_networks` (`public_network` and the workstation LAN) and SSH from
+  anywhere; everything else is denied. The networks are the trust boundary: every
+  device on them can reach all Ceph and monitoring ports.
 * **SSH is open to every network** that can route to the nodes (key-only logins). To
   restrict it, set `firewall_ssh_allowed_networks`; include your workstation's network
   and the cluster network, or you lock yourself and cephadm out.
