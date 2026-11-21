@@ -533,7 +533,7 @@ spec:
 | Change the dashboard password | In the dashboard, or `ceph dashboard ac-user-set-password admin -i <file>`. The vault value is only used at bootstrap |
 | Review the service specs    | `make specs` renders them into `build/specs/` without touching the cluster                           |
 | Preview a spec change       | `sudo cephadm shell --mount /etc/ceph/specs:/specs -- ceph orch apply -i /specs/cluster.yml --dry-run` |
-| Upgrade Ceph                | `scripts/ceph-release-pins.sh <version>`, copy the three values into `group_vars/ceph/main.yml`, `make upgrade` |
+| Upgrade Ceph                | Check "Known Ceph bugs" under "Notes and pitfalls" first. `scripts/ceph-release-pins.sh <version>`, copy the three values into `group_vars/ceph/main.yml`, `make upgrade`. There's no way back: a cluster can't be downgraded once all daemons run the new version |
 | Reboot a single node        | `make reboot ANSIBLE_ARGS="--limit ceph2"`                                                            |
 | Reboot after kernel updates | `make reboot`: requires a healthy cluster, sets `noout`, asks the orchestrator whether each node is safe to stop, reboots one node at a time, waits for recovery, always unsets `noout` |
 | Replace a failed OSD        | `ceph orch osd rm <id> --replace --zap`, swap disk; the OSD spec redeploys it                        |
@@ -579,6 +579,7 @@ Run the `ceph` commands in `sudo cephadm shell` on any node.
 | `make firmware`, `make network` or `make reboot` wait for 30 minutes and fail | The cluster isn't healthy, or not all placement groups are `active+clean`. Check `ceph health detail`. For a known, harmless warning, add its check name to `ceph_health_allowed_checks` |
 | `make site` stops at "Refuse to continue on a half-bootstrapped node" | A failed bootstrap left a partial cluster. Follow the cleanup commands in the error message, then rerun. For the bootstrap output, rerun with `ANSIBLE_ARGS="-e ceph_debug=true"` |
 | SSH fails with `REMOTE HOST IDENTIFICATION HAS CHANGED` | The node was re-flashed and has new host keys: run the commands in step 8 |
+| `RECENT_CRASH` for an OSD, `ceph crash info` shows `HeartbeatMap::_check` in the backtrace | The node ran out of memory and the OSD stalled. `journalctl -k \| grep "Out of memory"` on the node shows which process was killed. If it was `ceph-mgr` on Ceph 21.2.0, see "Known Ceph bugs" under "Notes and pitfalls". Clear the warning with `ceph crash archive-all` |
 | A node is unreachable after `make network` | Netplan didn't come up on the USB adapter. Log in through a keyboard and micro-HDMI console and check `ip link` and `netplan get` |
 
 ## Notes and pitfalls
@@ -601,6 +602,17 @@ Run the `ceph` commands in `sudo cephadm shell` on any node.
   `ceph orch ps` and `free -h` after a few days of real load; if a node gets close to
   the limit, lower `osd_memory_target` or the Prometheus retention before adding swap
   (swapping Ceph daemons hurts more than it helps).
+* **Known Ceph bugs.** Check these before choosing a version to install or upgrade to:
+  * **Ceph 21.2.0: the active ceph-mgr leaks memory**
+    ([tracker 81794](https://tracker.ceph.com/issues/81794)). Its map cache never frees
+    replaced Python objects, and the `prometheus` module refreshes `pg_dump` on every
+    scrape. Here it grew by about 10 MiB/min until the kernel OOM-killed it after one to
+    two days, which stalled the OSD on the same node so it aborted as well. The 21.0 and
+    21.1 development and release-candidate builds have the same code. The fix
+    ([ceph/ceph#73338](https://github.com/ceph/ceph/pull/73338)) is merged for 21.2.1:
+    only upgrade to a 21.x release whose release notes list it. On an affected version,
+    `ceph config set mgr mgr_map_cache_enabled false` stops the leak, and `ceph mgr fail`
+    frees what has already leaked.
 * **Alerts go nowhere by default.** Alertmanager only shows them in its UI and the
   dashboard. Set `ceph_alertmanager_webhook_urls` to get notified.
 * **Firewall:** nodes accept TCP on every port from the networks in
