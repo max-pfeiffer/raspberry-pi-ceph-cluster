@@ -94,6 +94,14 @@
   vars:
     ceph_spec: cephfs.yml
 
+# In check mode, a new file system was not created.
+- name: Converge Kubernetes tenants
+  ansible.builtin.include_tasks: k8s_tenants.yml
+  when: >-
+    ceph_k8s_clusters | length > 0
+    and (not ansible_check_mode
+         or ceph_k8s_filesystem in (_filesystems.stdout | from_json | map(attribute='name') | list))
+
 - name: Show cluster status
   ansible.builtin.command: "{{ ceph_shell }} ceph -s"
   register: _status

@@ -1,0 +1,46 @@
+{# Layout of the Kubernetes tenants, rendered with `lookup('template')` into a list:
+   names of the pools, subvolume group and RADOS namespace, quotas in bytes,
+   and the Ceph users with their caps. Caps follow ceph-csi's
+   docs/capabilities.md, narrowed to the tenant's pools, namespace and path. #}
+{% set fs = ceph_k8s_filesystem %}
+{% for cluster in ceph_k8s_clusters %}
+{%   set tenant = 'k8s-' ~ cluster.name %}
+{%   set rbd_pool = tenant ~ '-rbd' %}
+{%   set cephfs_data_pool = tenant ~ '-cephfs-data' %}
+- name: {{ cluster.name | to_json }}
+  rbd_pool: {{ rbd_pool | to_json }}
+  rbd_quota_bytes: {{ (cluster.rbd_quota_gib * 1073741824) | int }}
+  cephfs_data_pool: {{ cephfs_data_pool | to_json }}
+  cephfs_group: {{ tenant | to_json }}
+  cephfs_quota_bytes: {{ (cluster.cephfs_quota_gib * 1073741824) | int }}
+  # ceph-csi keeps its CephFS volume journal in the metadata pool.
+  cephfs_rados_namespace: {{ tenant | to_json }}
+  users:
+    - role: rbd-provisioner
+      id: {{ (tenant ~ '-rbd-provisioner') | to_json }}
+      caps:
+        mon: "profile rbd"
+        mgr: {{ ('profile rbd pool=' ~ rbd_pool) | to_json }}
+        osd: {{ ('profile rbd pool=' ~ rbd_pool) | to_json }}
+    - role: rbd-node
+      id: {{ (tenant ~ '-rbd-node') | to_json }}
+      caps:
+        mon: "profile rbd"
+        osd: {{ ('profile rbd pool=' ~ rbd_pool) | to_json }}
+    # `mgr allow rw` drives the mgr volumes module and can't be narrowed to a
+    # tenant: treat the CephFS keys as sensitive as the cluster itself.
+    - role: cephfs-provisioner
+      id: {{ (tenant ~ '-cephfs-provisioner') | to_json }}
+      caps:
+        mon: {{ ('allow r fsname=' ~ fs) | to_json }}
+        mgr: "allow rw"
+        mds: {{ ('allow r fsname=' ~ fs ~ ' path=/volumes, allow rws fsname=' ~ fs ~ ' path=/volumes/' ~ tenant) | to_json }}
+        osd: {{ ('allow rw pool=' ~ _k8s_metadata_pool ~ ' namespace=' ~ tenant) | to_json }}
+    - role: cephfs-node
+      id: {{ (tenant ~ '-cephfs-node') | to_json }}
+      caps:
+        mon: {{ ('allow r fsname=' ~ fs) | to_json }}
+        mgr: "allow rw"
+        mds: {{ ('allow rws fsname=' ~ fs ~ ' path=/volumes/' ~ tenant) | to_json }}
+        osd: {{ ('allow rw pool=' ~ cephfs_data_pool) | to_json }}
+{% endfor %}

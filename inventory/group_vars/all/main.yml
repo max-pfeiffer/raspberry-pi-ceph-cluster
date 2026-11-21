@@ -29,4 +29,8 @@ dns_servers:
 firewall_allowed_networks:
   - "{{ public_network }}"
   - 192.168.1.0/24   # workstation LAN
-  - 192.168.20.0/24  # Kubernetes Clusters
+# Networks of Ceph clients such as Kubernetes nodes: they may only reach the
+# Ceph ports (MON 3300/6789, OSD/MDS/MGR 6800-7300), not the dashboard or
+# monitoring. Clients on public_network are already allowed.
+firewall_ceph_client_networks:
+  - 192.168.20.0/24  # Kubernetes clusters production and test

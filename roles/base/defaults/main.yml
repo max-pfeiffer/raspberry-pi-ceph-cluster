@@ -21,6 +21,10 @@ firewall_enabled: true
 # trust boundary is the network, so there is no list of Ceph ports to maintain.
 firewall_allowed_networks:
   - "{{ public_network }}"
+# Networks of Ceph clients (e.g. Kubernetes nodes) that may only reach the Ceph
+# ports: MON (msgr2 3300, msgr1 6789) and OSD, MDS and MGR (6800-7300).
+firewall_ceph_client_networks: []
+firewall_ceph_client_ports: "3300,6789,6800:7300"
 # Sources allowed to reach SSH. The default is open, because narrowing it can
 # lock you out: make sure the list covers your workstation AND the cluster nodes
 # (cephadm connects between them), e.g. ["{{ public_network }}", 192.168.1.0/24].

@@ -8,6 +8,7 @@
 #
 # Covered: base, ceph_prereqs and ceph_cluster roles, a second run that must
 # change nothing, check mode, and the health gate.
+# Also covered: the Kubernetes tenants (pools, quotas, subvolume groups, users).
 # Not covered: firmware, network (netplan), reboots, upgrades, more than one node.
 set -euo pipefail
 
@@ -70,6 +71,12 @@ if ! grep -Eq "^$node +: ok=[0-9]+ +changed=0 +unreachable=0 +failed=0 " "$work/
   exit 1
 fi
 
+# The tenant tasks read `ceph auth ls`, which holds every key of the cluster.
+if grep -Eq "AQ[A-Za-z0-9+/]{38}==" "$work/second-run.log"; then
+  echo "::error::A Ceph key appears in the playbook output."
+  exit 1
+fi
+
 group "Check mode on the live cluster"
 playbook --check --diff "${playbooks[@]}"
 endgroup
@@ -86,6 +93,18 @@ ceph fs ls --format json | jq -e '.[] | select(.name == "cephfs")' >/dev/null \
   || { echo "::error::File system cephfs is missing."; exit 1; }
 ceph orch ls --format json | jq -e '[.[].service_name] | index("osd.nvme") and index("mds.cephfs")' >/dev/null \
   || { echo "::error::Expected services osd.nvme and mds.cephfs."; exit 1; }
+for cluster in production test; do
+  ceph osd pool ls detail --format json \
+    | jq -e --arg p "k8s-$cluster-rbd" '.[] | select(.pool_name == $p) | (.application_metadata | has("rbd")) and .quota_max_bytes > 0' >/dev/null \
+    || { echo "::error::Pool k8s-$cluster-rbd is missing, not initialized or has no quota."; exit 1; }
+  ceph fs subvolumegroup info cephfs "k8s-$cluster" \
+    | jq -e --arg p "k8s-$cluster-cephfs-data" '.data_pool == $p and (.bytes_quota | type) == "number"' >/dev/null \
+    || { echo "::error::Subvolume group k8s-$cluster has the wrong pool or no quota."; exit 1; }
+  for role in rbd-provisioner rbd-node cephfs-provisioner cephfs-node; do
+    ceph auth get "client.k8s-$cluster-$role" --format json | jq -e '.[0].caps | length > 0' >/dev/null \
+      || { echo "::error::User client.k8s-$cluster-$role is missing."; exit 1; }
+  done
+done
 endgroup
 
 echo "Integration test passed."

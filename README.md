@@ -42,6 +42,10 @@ no separate cluster (replication) network.
 * Replicated pools with `size=3`, `min_size=2`. There are too few hosts for erasure coding.
 * Capacity: about 2.7 TiB raw (3 × 1 TB), about 0.9 TiB usable; plan for about 780 GiB because of the 85 % nearfull limit
 * CephFS `cephfs` with 2 MDS (active + standby) on `ceph2` and `ceph3`, and an RBD pool `rbd`
+* Kubernetes clusters `production` and `test` are tenants: each has its own RBD pool and
+  CephFS data pool with subvolume group, a quota on both, and its own Ceph users that can
+  only reach these. Their keys exist only in Ceph and are never stored in a repo: copy
+  them into your own secret store (see "Kubernetes clusters")
 * Monitoring stack (Prometheus with 7 days retention, Grafana, Alertmanager) only on
   `ceph1`, node-exporter everywhere
 * Memory budget per 8 GB node: OSD 2.5 GiB, MON 1 GiB, MDS cache 1 GiB (see
@@ -59,7 +63,8 @@ inventory/
   hosts.yml                     Nodes, IPs, preferred admin/bootstrap node
   group_vars/all/main.yml       Networks, firewall, admin user, timezone
   group_vars/all/vault.yml      Secrets, encrypted with ansible-vault (you create it, git-ignored)
-  group_vars/ceph/main.yml      Ceph version + checksums, OSD disk models, placement labels
+  group_vars/ceph/main.yml      Ceph version + checksums, OSD disk models, placement labels,
+                                Kubernetes clusters and their quotas
   host_vars/cephN.yml           Per node labels (ceph1: monitoring, ceph2/3: mds)
 playbooks/
   render-cloud-init.yml         Renders first-boot files into build/cloud-init/<host>/
@@ -70,7 +75,7 @@ playbooks/
   10-base.yml                   Hostname, /etc/hosts, chrony, packages, firewall, unattended-upgrades
   20-network.yml                Netplan for the 2.5 GbE adapter (one node at a time, changes health-gated)
   30-ceph-prereqs.yml           Podman, pinned cephadm, image pre-pull, optional OSD disk wipe
-  40-ceph-cluster.yml           Bootstrap, add hosts, config, services, pools, CephFS
+  40-ceph-cluster.yml           Bootstrap, add hosts, config, services, pools, CephFS, Kubernetes tenants
   upgrade-ceph.yml              Rolling Ceph upgrade to `ceph_version`
   rolling-reboot.yml            Reboot nodes one by one, waiting for health
 roles/                          rpi_firmware, base, network, ceph_prereqs, ceph_cluster,
@@ -171,7 +176,9 @@ Check `inventory/hosts.yml` and `inventory/group_vars/`, in particular `public_n
 (`inventory/group_vars/all/main.yml`) reach the dashboard, Grafana and the other Ceph
 ports; SSH is open to all. If your workstation isn't on `public_network`, add its network
 to the list, e.g. `192.168.1.0/24`. The list replaces the role default, so keep
-`"{{ public_network }}"` in it, or the nodes can't reach each other.
+`"{{ public_network }}"` in it, or the nodes can't reach each other. Networks of Ceph
+clients such as Kubernetes nodes go into `firewall_ceph_client_networks` instead: they
+only reach the Ceph ports (3300, 6789, 6800-7300), not the dashboard or monitoring.
 
 **OSD disks from other vendors:** each entry in `ceph_osd_services` becomes one cephadm
 OSD service that picks up empty disks whose model contains its `model` string
@@ -358,7 +365,9 @@ Run `make site` a second time. It should finish with `changed=0` on all hosts.
 Create a client key with the least privileges it needs. Run these commands in
 `sudo cephadm shell` on any node.
 
-**RBD** (e.g. for a VM host or Kubernetes via ceph-csi):
+For Kubernetes, see "Kubernetes clusters" below. For other clients:
+
+**RBD** (e.g. for a VM host):
 
 ```shell
 ceph auth get-or-create client.rbd-user mon 'profile rbd' osd 'profile rbd pool=rbd' > ceph.client.rbd-user.keyring
@@ -379,11 +388,147 @@ On the client: `mount -t ceph ceph1,ceph2,ceph3:/ /mnt/cephfs -o name=fs-user,fs
 To make additional pools or file systems part of the code, add them to `ceph_rbd_pools`
 or `ceph_filesystems` in the inventory.
 
+## Kubernetes clusters
+
+The Kubernetes clusters are listed in `ceph_k8s_clusters`
+(`inventory/group_vars/ceph/main.yml`). `make ceph` creates for each cluster `<name>`:
+
+| Ceph resource | Name | Purpose |
+|---|---|---|
+| RBD pool | `k8s-<name>-rbd` | Block volumes (RWO), pool quota `rbd_quota_gib` |
+| CephFS data pool | `k8s-<name>-cephfs-data` | File data of the cluster's CephFS volumes |
+| CephFS subvolume group | `k8s-<name>` | Parent of all CephFS volumes (RWX), quota `cephfs_quota_gib`, data in the pool above |
+| RADOS namespace | `k8s-<name>` in the metadata pool | ceph-csi's CephFS volume journal |
+| Ceph users | `client.k8s-<name>-{rbd,cephfs}-{provisioner,node}` | Caps limited to the pools, namespace and path above |
+
+The caps are in `roles/ceph_cluster/templates/k8s-tenants.yml.j2`, and `make ceph` corrects
+any drift. A key of one cluster can't read or change the volumes of another. Exception:
+the CephFS users need `mgr "allow rw"` for ceph-csi, which can't be narrowed to a tenant,
+so treat the CephFS keys like admin credentials. The sum of all quotas must stay below
+the usable capacity (about 780 GiB): a full pool stops only its own tenant, but a full
+cluster stops all of them.
+
+### Handing the keys to a Kubernetes cluster
+
+The repo and the playbooks never contain or store a key: Ceph creates the keys, and you
+copy them into the secret store your Kubernetes clusters use (OpenBao, Vault, a cloud
+secret manager, SOPS, Sealed Secrets, ...). Read a key on any node, ideally piped straight
+into that store so it's never written to a file:
+
+```shell
+ssh ansible@ceph1 sudo cephadm shell -- ceph auth print-key client.k8s-production-rbd-node
+```
+
+ceph-csi expects four Secrets per Kubernetes cluster:
+
+| Kubernetes Secret (suggested name) | Fields | Ceph user | Used for |
+|---|---|---|---|
+| `csi-rbd-provisioner` | `userID`, `userKey` | `k8s-<name>-rbd-provisioner` | RBD provisioner and controller-expand secret |
+| `csi-rbd-node` | `userID`, `userKey` | `k8s-<name>-rbd-node` | RBD node-stage secret |
+| `csi-cephfs-provisioner` | `adminID`, `adminKey` | `k8s-<name>-cephfs-provisioner` | CephFS provisioner and controller-expand secret |
+| `csi-cephfs-node` | `userID`, `userKey` | `k8s-<name>-cephfs-node` | CephFS node-stage secret |
+
+The ID is the user name without `client.`, the key is the output of `ceph auth
+print-key`. Deploy the ceph-csi Helm charts with `secret.create: false`, so the keys
+don't end up in Helm values either.
+
+The rest of ceph-csi's configuration isn't secret:
+
+* `csiConfig`: `clusterID` from `ceph fsid`, `monitors` from `ceph mon dump` (the msgr1
+  addresses, `192.168.30.10:6789,...`, which kernel clients use without extra mount
+  options).
+* RBD StorageClass: `pool: k8s-<name>-rbd`.
+* CephFS: `fsName: cephfs`, and in `csiConfig` `cephFS.subvolumeGroup: k8s-<name>` and
+  `cephFS.radosNamespace: k8s-<name>`. The CephFS users can only write ceph-csi's
+  journal in that namespace, so the ceph-csi release must support
+  `cephFS.radosNamespace`.
+* `clusterName: <name>`, so ceph-csi tags every image and subvolume with the cluster
+  that owns it.
+
+#### Example: OpenBao and the External Secrets Operator
+
+Store the keys in OpenBao (KV v2 at `secret/`), one path per Ceph user. `userKey=-`
+reads the key from stdin, so it's never in a file, the shell history or the process
+list:
+
+```shell
+for role in rbd-provisioner rbd-node cephfs-node; do
+  ssh ansible@ceph1 sudo cephadm shell -- ceph auth print-key "client.k8s-production-$role" \
+    | bao kv put -mount=secret "ceph-csi/production/$role" userID="k8s-production-$role" userKey=-
+done
+ssh ansible@ceph1 sudo cephadm shell -- ceph auth print-key client.k8s-production-cephfs-provisioner \
+  | bao kv put -mount=secret ceph-csi/production/cephfs-provisioner \
+      adminID=k8s-production-cephfs-provisioner adminKey=-
+```
+
+Give each Kubernetes cluster its own policy and auth mount, so `production` and `test`
+can only read their own keys (the same for `test`):
+
+```shell
+bao policy write ceph-csi-production - <<'HCL'
+path "secret/data/ceph-csi/production/*" { capabilities = ["read"] }
+HCL
+bao auth enable -path=kubernetes-production kubernetes
+bao write auth/kubernetes-production/config \
+  kubernetes_host=https://<production-api>:6443 kubernetes_ca_cert=@production-ca.crt
+bao write auth/kubernetes-production/role/ceph-csi \
+  bound_service_account_names=ceph-csi-openbao \
+  bound_service_account_namespaces=ceph-csi-rbd,ceph-csi-cephfs \
+  token_policies=ceph-csi-production token_ttl=15m
+```
+
+The auth method calls the cluster's TokenReview API, so the service account needs the
+`system:auth-delegator` ClusterRole (or set `token_reviewer_jwt`). In the Kubernetes
+cluster, the External Secrets Operator then creates the Secrets, e.g. in namespace
+`ceph-csi-rbd`:
+
+```yaml
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: openbao
+  namespace: ceph-csi-rbd
+spec:
+  provider:
+    vault:
+      server: https://openbao.example:8200
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes-production
+          role: ceph-csi
+          serviceAccountRef:
+            name: ceph-csi-openbao
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: csi-rbd-provisioner
+  namespace: ceph-csi-rbd
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: openbao
+    kind: SecretStore
+  target:
+    name: csi-rbd-provisioner
+  dataFrom:
+    - extract:
+        key: ceph-csi/production/rbd-provisioner
+# ... and csi-rbd-node; the same for CephFS in namespace ceph-csi-cephfs
+```
+
 ## Day-2 operations
 
 | Task                        | How                                                                                                  |
 |-----------------------------|------------------------------------------------------------------------------------------------------|
 | Change configuration        | Edit the inventory / role defaults, run `make site`                                                  |
+| Add a Kubernetes cluster    | Add it to `ceph_k8s_clusters`, `make ceph`, then copy its keys into your secret store (see "Kubernetes clusters") |
+| Change a Kubernetes quota   | Change `rbd_quota_gib` / `cephfs_quota_gib`, `make ceph`                                              |
+| Rotate a Kubernetes key     | `ceph auth rm client.k8s-<name>-<role>`, `make ceph` (creates it with a new key), copy the new key into your secret store, update the Kubernetes Secret, restart the ceph-csi pods. Mounts using the old key stop working once it's removed, so do this in a maintenance window |
+| Revoke a Kubernetes cluster | `ceph auth rm` its four `client.k8s-<name>-*` users. No other cluster is affected |
+| Remove a Kubernetes cluster | Delete its volumes in Kubernetes, remove it from `ceph_k8s_clusters`, then by hand: `ceph auth rm` its users, `ceph fs subvolumegroup rm cephfs k8s-<name>`, `ceph fs rm_data_pool cephfs k8s-<name>-cephfs-data`, delete both pools (needs `mon_allow_pool_delete`), delete its keys from your secret store |
 | Remove something            | Delete it from the repo, then remove it on the cluster by hand: `ceph config rm <who> <option>` for a config option, `ceph orch rm <service>` for a service (e.g. the monitoring stack after setting `ceph_monitoring_enabled: false`), `sudo ufw delete allow proto tcp from <network> to any` on every node for a network removed from `firewall_allowed_networks` |
 | Change the dashboard password | In the dashboard, or `ceph dashboard ac-user-set-password admin -i <file>`. The vault value is only used at bootstrap |
 | Review the service specs    | `make specs` renders them into `build/specs/` without touching the cluster                           |
@@ -412,9 +557,10 @@ Two workflows run on every push to `main` and every pull request:
 * **integration:** `tests/integration/run.sh` runs the real `base`, `ceph_prereqs` and
   `ceph_cluster` playbooks against an arm64 runner and builds a single-node Ceph cluster
   on it, with the OSD on a logical volume. It then waits for a healthy cluster, runs
-  everything a second time (which must change nothing) and once more in check mode, and
-  verifies the OSD, the `rbd` pool and the `cephfs` file system. The test's overrides
-  are in `tests/integration/vars.yml`.
+  everything a second time (which must change nothing, and must not print a key) and
+  once more in check mode, and verifies the OSD, the `rbd` pool, the `cephfs` file
+  system and the Kubernetes tenants. The test's overrides are in
+  `tests/integration/vars.yml`.
 
 CI can't cover the Raspberry Pi firmware, the netplan change on the USB adapter,
 reboots, upgrades, or anything that needs more than one node.
@@ -458,8 +604,9 @@ Run the `ceph` commands in `sudo cephadm shell` on any node.
 * **Alerts go nowhere by default.** Alertmanager only shows them in its UI and the
   dashboard. Set `ceph_alertmanager_webhook_urls` to get notified.
 * **Firewall:** nodes accept TCP on every port from the networks in
-  `firewall_allowed_networks` (`public_network` and the workstation LAN) and SSH from
-  anywhere; everything else is denied. The networks are the trust boundary: every
+  `firewall_allowed_networks` (`public_network` and the workstation LAN), the Ceph ports
+  from `firewall_ceph_client_networks` (the Kubernetes nodes), and SSH from anywhere;
+  everything else is denied. The networks are the trust boundary: every
   device on them can reach all Ceph and monitoring ports.
 * **SSH is open to every network** that can route to the nodes (key-only logins). To
   restrict it, set `firewall_ssh_allowed_networks`; include your workstation's network

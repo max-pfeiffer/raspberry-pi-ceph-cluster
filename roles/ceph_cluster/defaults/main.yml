@@ -39,3 +39,12 @@ ceph_filesystems:
   - name: cephfs
 
 ceph_expected_osds: "{{ groups['ceph'] | length }}"
+
+# Kubernetes clusters as tenants (see ceph_k8s_clusters in the inventory). They
+# use the first file system.
+ceph_k8s_clusters: []
+ceph_k8s_filesystem: "{{ ceph_filesystems[0].name }}"
+# Initial PGs of each tenant pool. With 3 OSDs, every OSD holds a copy of every
+# PG and refuses new pools above mon_max_pg_per_osd (250), so the pools start
+# small; the autoscaler grows them with their data.
+ceph_k8s_pool_pg_num: 16

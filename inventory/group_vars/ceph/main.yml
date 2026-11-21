@@ -41,3 +41,18 @@ ceph_host_extra_labels: []
 # Health checks tolerated when waiting for a healthy cluster before/after a
 # disruptive change (firmware, network, reboots), e.g. [POOL_NO_REDUNDANCY].
 ceph_health_allowed_checks: []
+
+# --- Kubernetes clusters ----------------------------------------------------
+# Each Kubernetes cluster is a tenant with its own RBD pool, CephFS subvolume
+# group and data pool, and its own Ceph users. Quotas keep one cluster from
+# filling the Ceph cluster for all others; their sum must stay below the usable
+# capacity (about 780 GiB). The users' keys only exist in Ceph, never in the
+# repo: hand them to the Kubernetes clusters as described in the README.
+# Don't rename a cluster that has volumes: the pools and users are named after it.
+ceph_k8s_clusters:
+  - name: production
+    rbd_quota_gib: 200
+    cephfs_quota_gib: 100
+  - name: test
+    rbd_quota_gib: 200
+    cephfs_quota_gib: 100

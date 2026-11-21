@@ -99,6 +99,14 @@
         proto: tcp
       loop: "{{ firewall_allowed_networks }}"
 
+    - name: Allow the Ceph ports from client networks
+      community.general.ufw:
+        rule: allow
+        src: "{{ item }}"
+        port: "{{ firewall_ceph_client_ports }}"
+        proto: tcp
+      loop: "{{ firewall_ceph_client_networks }}"
+
     - name: Enable firewall with default deny
       community.general.ufw:
         state: enabled

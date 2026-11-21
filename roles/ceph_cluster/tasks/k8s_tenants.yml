@@ -1,0 +1,141 @@
+---
+# Kubernetes clusters as tenants (ceph_k8s_clusters): per cluster an RBD pool with
+# a quota, a CephFS data pool with a subvolume group and its quota, and Ceph users
+# restricted to them. Their keys stay in Ceph; see the README for handing them
+# to the Kubernetes clusters.
+- name: List file systems for Kubernetes tenants
+  ansible.builtin.command: "{{ ceph_shell }} ceph fs ls --format json"
+  register: _k8s_filesystems
+  changed_when: false
+  check_mode: false
+
+- name: Render the layout of the Kubernetes tenants
+  ansible.builtin.set_fact:
+    _k8s_fs: "{{ _fs }}"
+    _k8s_tenants: "{{ lookup('ansible.builtin.template', 'k8s-tenants.yml.j2') | from_yaml | default([], true) }}"
+  vars:
+    _fs: "{{ _k8s_filesystems.stdout | from_json | selectattr('name', 'equalto', ceph_k8s_filesystem) | first }}"
+    _k8s_metadata_pool: "{{ _fs.metadata_pool }}"
+
+- name: List pools for Kubernetes tenants
+  ansible.builtin.command: "{{ ceph_shell }} ceph osd pool ls detail --format json"
+  register: _k8s_pools_before
+  changed_when: false
+  check_mode: false
+
+- name: Create pools for Kubernetes tenants
+  ansible.builtin.command: "{{ ceph_shell }} ceph osd pool create {{ item }} {{ ceph_k8s_pool_pg_num }}"
+  loop: "{{ _k8s_tenants | map(attribute='rbd_pool') + _k8s_tenants | map(attribute='cephfs_data_pool') }}"
+  when: item not in (_k8s_pools_before.stdout | from_json | map(attribute='pool_name') | list)
+  changed_when: true
+
+# Read again, so that the steps below also see the pools created above.
+- name: List pools for Kubernetes tenants after creating them
+  ansible.builtin.command: "{{ ceph_shell }} ceph osd pool ls detail --format json"
+  register: _k8s_pools
+  changed_when: false
+  check_mode: false
+
+- name: Initialize RBD pools of Kubernetes tenants
+  ansible.builtin.command: "{{ ceph_shell }} rbd pool init {{ item.rbd_pool }}"
+  loop: "{{ _k8s_tenants }}"
+  loop_control:
+    label: "{{ item.rbd_pool }}"
+  when: >-
+    'rbd' not in (_k8s_pools.stdout | from_json
+                  | selectattr('pool_name', 'equalto', item.rbd_pool)
+                  | map(attribute='application_metadata') | first | default({}))
+  changed_when: true
+
+# A full pool blocks only its own tenant; a full cluster blocks all of them.
+- name: Set quotas of the RBD pools
+  ansible.builtin.command: "{{ ceph_shell }} ceph osd pool set-quota {{ item.rbd_pool }} max_bytes {{ item.rbd_quota_bytes }}"
+  loop: "{{ _k8s_tenants }}"
+  loop_control:
+    label: "{{ item.rbd_pool }}={{ item.rbd_quota_bytes }}"
+  when: >-
+    (_k8s_pools.stdout | from_json
+     | selectattr('pool_name', 'equalto', item.rbd_pool)
+     | map(attribute='quota_max_bytes') | first | default(0)) | int != item.rbd_quota_bytes | int
+  changed_when: true
+
+# Also tags the pool with the cephfs application.
+- name: Add the CephFS data pools to the file system
+  ansible.builtin.command: "{{ ceph_shell }} ceph fs add_data_pool {{ ceph_k8s_filesystem }} {{ item.cephfs_data_pool }}"
+  loop: "{{ _k8s_tenants }}"
+  loop_control:
+    label: "{{ item.cephfs_data_pool }}"
+  when: item.cephfs_data_pool not in _k8s_fs.data_pools
+  changed_when: true
+
+- name: List CephFS subvolume groups
+  ansible.builtin.command: "{{ ceph_shell }} ceph fs subvolumegroup ls {{ ceph_k8s_filesystem }} --format json"
+  register: _k8s_groups
+  changed_when: false
+  check_mode: false
+
+# The group's quota limits all volumes of the tenant together; its pool layout
+# puts their data into the tenant's own pool.
+- name: Create CephFS subvolume groups
+  ansible.builtin.command: >-
+    {{ ceph_shell }} ceph fs subvolumegroup create {{ ceph_k8s_filesystem }} {{ item.cephfs_group }}
+    --pool_layout {{ item.cephfs_data_pool }} --size {{ item.cephfs_quota_bytes }}
+  loop: "{{ _k8s_tenants }}"
+  loop_control:
+    label: "{{ item.cephfs_group }}"
+  when: item.cephfs_group not in (_k8s_groups.stdout | from_json | map(attribute='name') | list)
+  changed_when: true
+
+- name: Read CephFS subvolume groups
+  ansible.builtin.command: "{{ ceph_shell }} ceph fs subvolumegroup info {{ ceph_k8s_filesystem }} {{ item.cephfs_group }}"
+  loop: "{{ _k8s_tenants }}"
+  loop_control:
+    label: "{{ item.cephfs_group }}"
+  register: _k8s_group_info
+  changed_when: false
+  check_mode: false
+  # In check mode, a new group was not created.
+  when: not ansible_check_mode or item.cephfs_group in (_k8s_groups.stdout | from_json | map(attribute='name') | list)
+
+- name: Set quotas of the CephFS subvolume groups
+  ansible.builtin.command: >-
+    {{ ceph_shell }} ceph fs subvolumegroup resize {{ ceph_k8s_filesystem }} {{ item.item.cephfs_group }}
+    {{ item.item.cephfs_quota_bytes }}
+  loop: "{{ _k8s_group_info.results | selectattr('stdout', 'defined') }}"
+  loop_control:
+    label: "{{ item.item.cephfs_group }}={{ item.item.cephfs_quota_bytes }}"
+  when: (item.stdout | from_json).bytes_quota | string != item.item.cephfs_quota_bytes | string
+  changed_when: true
+
+# The dump contains every key of the cluster.
+- name: Read Ceph users
+  ansible.builtin.command: "{{ ceph_shell }} ceph auth ls --format json"
+  register: _k8s_auth
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+# Only the caps, without the keys.
+- name: Record the caps of existing Ceph users
+  ansible.builtin.set_fact:
+    _k8s_caps: "{{ (_k8s_auth.stdout | from_json).auth_dump | items2dict(key_name='entity', value_name='caps') }}"
+
+- name: Create Ceph users for Kubernetes tenants
+  ansible.builtin.command:
+    argv: "{{ ceph_shell.split() + ['ceph', 'auth', 'add', 'client.' ~ item.1.id] + (item.1.caps.items() | flatten) }}"
+  loop: "{{ _k8s_tenants | subelements('users') }}"
+  loop_control:
+    label: "client.{{ item.1.id }}"
+  when: ('client.' ~ item.1.id) not in _k8s_caps
+  changed_when: true
+
+- name: Update caps of Ceph users for Kubernetes tenants
+  ansible.builtin.command:
+    argv: "{{ ceph_shell.split() + ['ceph', 'auth', 'caps', 'client.' ~ item.1.id] + (item.1.caps.items() | flatten) }}"
+  loop: "{{ _k8s_tenants | subelements('users') }}"
+  loop_control:
+    label: "client.{{ item.1.id }}"
+  when: >-
+    ('client.' ~ item.1.id) in _k8s_caps
+    and _k8s_caps['client.' ~ item.1.id] != item.1.caps
+  changed_when: true
